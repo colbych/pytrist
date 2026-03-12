@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pytrist"
+version = "0.1.0"
+description = "Python reader for Tristan-MP V2 plasma PIC simulation output"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.21",
+    "h5py>=3.0",
+]
+
+[project.optional-dependencies]
+xarray = ["xarray>=0.19"]
+dev = ["pytest", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pytrist*"]
