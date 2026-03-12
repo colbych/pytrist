@@ -6,15 +6,35 @@ build-backend = "setuptools.build_meta"
 name = "pytrist"
 version = "0.1.0"
 description = "Python reader for Tristan-MP V2 plasma PIC simulation output"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.9"
+keywords = ["plasma", "PIC", "simulation", "HDF5", "Tristan"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "numpy>=1.21",
     "h5py>=3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/colbych/pytrist"
+Repository = "https://github.com/colbych/pytrist"
+"Bug Tracker" = "https://github.com/colbych/pytrist/issues"
+
 [project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
 xarray = ["xarray>=0.19"]
-dev = ["pytest", "pytest-cov"]
+dev = ["pytest", "pytest-cov", "matplotlib>=3.5"]
 
 [tool.setuptools.packages.find]
 where = ["."]
