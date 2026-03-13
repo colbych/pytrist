@@ -44,6 +44,7 @@ import numpy as np
 
 from .fields import FieldSnapshot
 from .history import History
+from .moments import ParticleMoments
 from .params import SimParams
 from .particles import ParticleSnapshot
 from .spectra import SpectraSnapshot
@@ -150,6 +151,7 @@ class Simulation:
         self._fields_cache: dict[int, FieldSnapshot] = {}
         self._particles_cache: dict[int, ParticleSnapshot] = {}
         self._spectra_cache: dict[int, SpectraSnapshot] = {}
+        self._moments_cache: dict[int, ParticleMoments] = {}
         self._history_cache: History | None = None
         self._unit_converter_cache: UnitConverter | None = None
 
@@ -407,6 +409,42 @@ class Simulation:
             f"History file not found in {self.output_dir}. "
             "Tried: " + ", ".join(str(c) for c in candidates)
         )
+
+    def moments(
+        self,
+        step: int,
+        region: tuple[int, int, int, int] | None = None,
+    ) -> ParticleMoments:
+        """Return a :class:`~pytrist.moments.ParticleMoments` for *step*.
+
+        Full-box requests are cached; sub-region requests are not.
+
+        Parameters
+        ----------
+        step : int
+            Step number.
+        region : tuple of int, optional
+            ``(x0, x1, y0, y1)`` in cell indices (half-open).
+            Defaults to the full simulation box.
+        """
+        cache_key: int | None = step if region is None else None
+        if cache_key is not None and cache_key in self._moments_cache:
+            return self._moments_cache[cache_key]
+
+        prtl = self.particles(step)
+        try:
+            uc = self.unit_converter
+        except FileNotFoundError:
+            uc = None
+        try:
+            p = self.params(step)
+        except (FileNotFoundError, KeyError):
+            p = None
+
+        obj = ParticleMoments(prtl, params=p, unit_converter=uc, region=region)
+        if cache_key is not None:
+            self._moments_cache[cache_key] = obj
+        return obj
 
     # ------------------------------------------------------------------
     # Convenience methods

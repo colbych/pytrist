@@ -32,6 +32,7 @@ Classes can also be imported directly::
 from .simulation import Simulation
 from .fields import FieldSnapshot, FieldLoader
 from .particles import ParticleSnapshot
+from .moments import ParticleMoments
 from .params import SimParams
 from .history import History
 from .spectra import SpectraSnapshot
@@ -45,6 +46,7 @@ __all__ = [
     "FieldSnapshot",
     "FieldLoader",
     "ParticleSnapshot",
+    "ParticleMoments",
     "SimParams",
     "History",
     "SpectraSnapshot",
