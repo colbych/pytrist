@@ -15,7 +15,7 @@ Typical usage::
     sim  = pytrist.Simulation("/path/to/output/")
     moms = sim.moments(step=10)
 
-    n_e  = moms.density(1)                   # (ny, nx), dimensionless
+    n_e  = moms.density(1)                   # (ny, nx), dimensionless, ≈1 upstream
     V    = moms.bulk_velocity(2)             # dict with 'vx','vy','vz' in c
     T    = moms.temperature(1)               # (ny, nx), c²
     P    = moms.temperature_tensor(1)        # dict with 'xx','yy',… in c²
@@ -53,6 +53,18 @@ def _get_stride(params) -> int:
     return 1
 
 
+def _get_n0(params) -> float | None:
+    """Return ppc0/2 from params, or None if unavailable."""
+    for key in ("plasma:ppc0", "ppc0", "ppc"):
+        try:
+            val = params[key]
+            if val is not None:
+                return float(val) / 2.0
+        except (KeyError, TypeError, AttributeError):
+            pass
+    return None
+
+
 class ParticleMoments:
     """Fluid moments computed from a :class:`~pytrist.particles.ParticleSnapshot`.
 
@@ -65,12 +77,16 @@ class ParticleMoments:
     particle_snapshot : ParticleSnapshot
         Source particle data.  Positions must be in code units (cells).
     params : SimParams, optional
-        Simulation parameters.  Used to read the grid size and output stride.
+        Simulation parameters.  Used to read the grid size, output stride,
+        and reference density n0 = ppc0/2.
     unit_converter : UnitConverter, optional
         Required for ``units='ion'`` conversions.
     region : tuple of int, optional
         Sub-region ``(x0, x1, y0, y1)`` in cell indices, half-open
         ``[x0, x1) × [y0, y1)``.  Defaults to the full box.
+    n0 : float, optional
+        Reference single-species density (ppc0/2).  If not provided,
+        read from params.  Required for moment computation.
     """
 
     def __init__(
@@ -79,6 +95,7 @@ class ParticleMoments:
         params=None,
         unit_converter: UnitConverter | None = None,
         region: tuple[int, int, int, int] | None = None,
+        n0: float | None = None,
     ) -> None:
         self._prtl = particle_snapshot
         self._params = params
@@ -86,6 +103,10 @@ class ParticleMoments:
         self._cache: dict[tuple, np.ndarray] = {}
 
         self._stride = _get_stride(params)
+        if n0 is not None:
+            self._n0: float | None = float(n0)
+        else:
+            self._n0 = _get_n0(params)
         nx, ny = self._read_grid_size()
         self._nx_full = nx
         self._ny_full = ny
@@ -177,8 +198,13 @@ class ParticleMoments:
             return H.T  # histogram2d returns (nx, ny), transpose → (ny, nx)
 
         # ----- density -----
+        if self._n0 is None:
+            raise ValueError(
+                "n0 (reference density = ppc0/2) is required. "
+                "Provide params or pass n0= explicitly."
+            )
         sum_wei = _bin2d(wei)
-        n = sum_wei * self._stride
+        n = (sum_wei * self._stride) / self._n0   # dimensionless, ≈1 upstream
         self._cache[("density", sid)] = n
 
         # ----- bulk velocity -----
@@ -198,15 +224,22 @@ class ParticleMoments:
         avg_uw = np.where(valid, _bin2d(wei * u * w) / sum_wei, 0.0)
         avg_vw = np.where(valid, _bin2d(wei * v * w) / sum_wei, 0.0)
 
-        # ----- pressure tensor Pij = <ui uj> - Vi Vj -----
-        self._cache[("Pxx", sid)] = avg_uu - Vx * Vx
-        self._cache[("Pyy", sid)] = avg_vv - Vy * Vy
-        self._cache[("Pzz", sid)] = avg_ww - Vz * Vz
-        self._cache[("Pxy", sid)] = avg_uv - Vx * Vy
-        self._cache[("Pxz", sid)] = avg_uw - Vx * Vz
-        self._cache[("Pyz", sid)] = avg_vw - Vy * Vz
+        # ----- pressure tensor: P_ij = n × (<ui uj> - Vi Vj) -----
+        Txx = avg_uu - Vx * Vx
+        Tyy = avg_vv - Vy * Vy
+        Tzz = avg_ww - Vz * Vz
+        Txy = avg_uv - Vx * Vy
+        Txz = avg_uw - Vx * Vz
+        Tyz = avg_vw - Vy * Vz
 
-        # ----- heat flux -----
+        self._cache[("Pxx", sid)] = n * Txx
+        self._cache[("Pyy", sid)] = n * Tyy
+        self._cache[("Pzz", sid)] = n * Tzz
+        self._cache[("Pxy", sid)] = n * Txy
+        self._cache[("Pxz", sid)] = n * Txz
+        self._cache[("Pyz", sid)] = n * Tyz
+
+        # ----- heat flux: Q_i = n × ½<|δu|² δu_i> -----
         u2 = u * u + v * v + w * w  # |u|² per particle
         avg_u2 = np.where(valid, _bin2d(wei * u2) / sum_wei, 0.0)
         avg_u2u = np.where(valid, _bin2d(wei * u2 * u) / sum_wei, 0.0)
@@ -218,15 +251,13 @@ class ParticleMoments:
         cross_y = avg_uv * Vx + avg_vv * Vy + avg_vw * Vz
         cross_z = avg_uw * Vx + avg_vw * Vy + avg_ww * Vz
 
-        self._cache[("qx", sid)] = 0.5 * (
-            avg_u2u - avg_u2 * Vx - 2.0 * cross_x + 2.0 * V2 * Vx
-        )
-        self._cache[("qy", sid)] = 0.5 * (
-            avg_u2v - avg_u2 * Vy - 2.0 * cross_y + 2.0 * V2 * Vy
-        )
-        self._cache[("qz", sid)] = 0.5 * (
-            avg_u2w - avg_u2 * Vz - 2.0 * cross_z + 2.0 * V2 * Vz
-        )
+        qx = 0.5 * (avg_u2u - avg_u2 * Vx - 2.0 * cross_x + 2.0 * V2 * Vx)
+        qy = 0.5 * (avg_u2v - avg_u2 * Vy - 2.0 * cross_y + 2.0 * V2 * Vy)
+        qz = 0.5 * (avg_u2w - avg_u2 * Vz - 2.0 * cross_z + 2.0 * V2 * Vz)
+
+        self._cache[("qx", sid)] = n * qx
+        self._cache[("qy", sid)] = n * qy
+        self._cache[("qz", sid)] = n * qz
 
     def _ensure_computed(self, species_id: int) -> None:
         if ("density", species_id) not in self._cache:
@@ -237,11 +268,10 @@ class ParticleMoments:
     # ------------------------------------------------------------------
 
     def density(self, species_id: int, units: str = "code") -> np.ndarray:
-        """Number density in code units (matches ``dens1``/``dens2`` in fields).
+        """Dimensionless number density normalized to n0 = ppc0/2.
 
-        The density is ``Σwei × stride`` per cell — the same normalisation
-        used by Tristan's field output.  No conversion is applied for
-        ``units='ion'`` (density is already dimensionless in both systems).
+        Upstream value ≈ 1.  No conversion is applied for ``units='ion'``
+        (density is dimensionless in both unit systems).
 
         Parameters
         ----------
@@ -292,7 +322,10 @@ class ParticleMoments:
     def temperature_tensor(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Pressure / temperature tensor  Pij = <ui uj> − Vi Vj.
+        """Pressure tensor  P_ij = n × (<ui uj> − Vi Vj).
+
+        Extensive quantity: multiply the intensive temperature tensor by the
+        dimensionless density n/n0.  Upstream value ≈ T_upstream.
 
         Parameters
         ----------
@@ -327,7 +360,10 @@ class ParticleMoments:
         return result
 
     def temperature(self, species_id: int, units: str = "code") -> np.ndarray:
-        """Scalar temperature  T = (Pxx + Pyy + Pzz) / 3.
+        """Scalar temperature  T = Tr(P) / (3 n).
+
+        Recovers the intensive per-particle temperature from the extensive
+        pressure tensor.
 
         Parameters
         ----------
@@ -340,15 +376,23 @@ class ParticleMoments:
         numpy.ndarray, shape (ny_region, nx_region)
         """
         P = self.temperature_tensor(species_id, units=units)
-        return (P["xx"] + P["yy"] + P["zz"]) / 3.0
+        n = self.density(species_id)   # dimensionless, no unit conversion
+        valid = n > 0
+        return np.where(
+            valid,
+            (P["xx"] + P["yy"] + P["zz"]) / (3.0 * np.where(valid, n, 1.0)),
+            0.0,
+        )
 
     def heat_flux(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Heat flux vector components.
+        """Extensive heat flux  Q_i = n × ½<|δu|² δu_i>.
 
-        The heat flux is defined as the third-order velocity moment in the
-        bulk-flow frame::
+        Extensive quantity: the intensive heat flux multiplied by n/n0.
+
+        The intensive heat flux is defined as the third-order velocity moment
+        in the bulk-flow frame::
 
             qi = ½(<|δu|² δui>)   where  δu = u − V
 
