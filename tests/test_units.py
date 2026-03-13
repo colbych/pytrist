@@ -172,8 +172,12 @@ class TestLengthConversion:
         expected = cells * uc_standard.cell_to_di
         np.testing.assert_allclose(uc_standard.length(cells), expected, rtol=1e-12)
 
-    def test_returns_ndarray(self, uc_standard):
+    def test_scalar_returns_float(self, uc_standard):
         result = uc_standard.length(50.0)
+        assert isinstance(result, float)
+
+    def test_array_returns_ndarray(self, uc_standard):
+        result = uc_standard.length(np.array([50.0]))
         assert isinstance(result, np.ndarray)
 
     def test_zero_maps_to_zero(self, uc_standard):
@@ -196,8 +200,11 @@ class TestTimeConversion:
         expected = t_code * uc_standard.wpe_to_wci
         np.testing.assert_allclose(uc_standard.time(t_code), expected, rtol=1e-12)
 
-    def test_returns_ndarray(self, uc_standard):
-        assert isinstance(uc_standard.time(10.0), np.ndarray)
+    def test_scalar_returns_float(self, uc_standard):
+        assert isinstance(uc_standard.time(10.0), float)
+
+    def test_array_returns_ndarray(self, uc_standard):
+        assert isinstance(uc_standard.time(np.array([10.0])), np.ndarray)
 
     def test_pair_plasma(self, uc_pair):
         # σ=1, mi_me=1 → wpe_to_wci = 1 → t[Ωci] = t[ωpe]
@@ -215,7 +222,7 @@ class TestSpeedConversion:
         # vAi/c in code → should give exactly 1.0 in ion units
         vAi_in_c = uc_standard.vAi_over_c
         result = uc_standard.speed(vAi_in_c)
-        assert result.flat[0] == pytest.approx(1.0, rel=1e-12)
+        assert float(result) == pytest.approx(1.0, rel=1e-12)
 
     def test_array_conversion(self, uc_standard):
         v = np.array([0.0, 0.1, 0.5, 1.0])
@@ -339,10 +346,10 @@ class TestNumericalValues:
         # 1/ωpe → Ωci: multiply by √σ/mi_me = √0.1/100
         uc = UnitConverter(c_omp=10, sigma=0.1, mass_ratio=100, CC=0.45)
         expected = np.sqrt(0.1) / 100.0
-        assert uc.time(1.0).flat[0] == pytest.approx(expected, rel=1e-12)
+        assert uc.time(1.0) == pytest.approx(expected, rel=1e-12)
 
     def test_speed_vAi_is_1(self):
         # Speed equal to vAi should map to exactly 1.0 in ion units
         uc = UnitConverter(c_omp=10, sigma=0.1, mass_ratio=100, CC=0.45)
         vAi_in_c = np.sqrt(0.1 / 100.0)
-        assert uc.speed(vAi_in_c).flat[0] == pytest.approx(1.0, rel=1e-12)
+        assert uc.speed(vAi_in_c) == pytest.approx(1.0, rel=1e-12)

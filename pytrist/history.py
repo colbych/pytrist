@@ -37,8 +37,8 @@ import numpy as np
 
 from .units import UnitConverter
 
-# Common names for the time column
-_TIME_COLUMN_CANDIDATES = ["t", "time", "step", "it"]
+# Common names for the time column (including bracket-wrapped variants)
+_TIME_COLUMN_CANDIDATES = ["t", "time", "[time]", "step", "it"]
 
 
 class History:
@@ -228,11 +228,15 @@ class History:
     def time_ion(self) -> np.ndarray | None:
         """Time column converted to ion cyclotron periods (1/Ωci_y).
 
+        Tristan-V2 stores time as an integer step counter.  This property
+        applies the full conversion: steps → 1/ωpe → 1/Ωci_y via
+        :attr:`UnitConverter.step_to_wci`.
+
         Returns ``None`` if no UnitConverter or no time column.
         """
         if self.uc is None or self.time is None:
             return None
-        return self.uc.time(self.time)
+        return self.time * self.uc.step_to_wci
 
     # ------------------------------------------------------------------
     # Representation

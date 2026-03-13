@@ -30,13 +30,15 @@ import numpy as np
 # versions.  Map canonical names → list of alternatives to try.
 # ---------------------------------------------------------------------------
 _ALIASES: dict[str, list[str]] = {
-    "mass_ratio": ["mi_me", "mass_ratio", "mi/me"],
-    "c_omp": ["c_omp", "comp"],
-    "sigma": ["sigma"],
-    "CC": ["CC", "c", "speed_of_light"],
-    "ppc0": ["ppc0", "ppc"],
+    # mass_ratio is computed from particle masses; these are fallback direct keys
+    "mass_ratio": ["mass_ratio", "mi_me", "mi/me"],
+    "c_omp": ["plasma:c_omp", "c_omp", "comp"],
+    "sigma": ["plasma:sigma", "sigma"],
+    "CC": ["algorithm:c", "CC", "c", "speed_of_light"],
+    "ppc0": ["plasma:ppc0", "ppc0", "ppc"],
+    # time is computed from timestep * CC / c_omp; "time" is a fallback direct key
     "time": ["time"],
-    "output_interval": ["output/interval", "interval"],
+    "output_interval": ["output:interval", "output/interval", "interval"],
 }
 
 
@@ -187,8 +189,24 @@ class SimParams:
 
     @property
     def mass_ratio(self) -> float:
-        """Ion-to-electron mass ratio mi/me."""
-        return float(self._get_alias("mass_ratio"))
+        """Ion-to-electron mass ratio mi/me.
+
+        Computed as particles:m2 / particles:m1 when a direct key is absent.
+        Assumes species 1 = electrons (lightest), species 2 = ions.
+        """
+        # Try direct key first
+        for key in _ALIASES["mass_ratio"]:
+            if key in self._data:
+                return float(self._data[key])
+        # Compute from individual particle masses
+        m1_key = next((k for k in ["particles:m1", "m1"] if k in self._data), None)
+        m2_key = next((k for k in ["particles:m2", "m2"] if k in self._data), None)
+        if m1_key and m2_key:
+            return float(self._data[m2_key]) / float(self._data[m1_key])
+        raise AttributeError(
+            "mass_ratio not found. Expected 'mass_ratio', 'mi_me', or "
+            "'particles:m1' + 'particles:m2' in params file."
+        )
 
     @property
     def CC(self) -> float:
@@ -197,8 +215,24 @@ class SimParams:
 
     @property
     def time(self) -> float:
-        """Simulation time in units of 1/ωpe."""
-        return float(self._get_alias("time"))
+        """Simulation time in units of 1/ωpe.
+
+        Tristan-V2 stores the integer step counter in 'timestep'.  The
+        physical time is  t = step × CC / c_omp  (since ωpe = CC/c_omp
+        in code units: de = c_omp cells, c = CC cells/step → ωpe = CC/c_omp).
+        A direct 'time' key is used if present for forward compatibility.
+        """
+        # Direct key (forward-compatibility with future Tristan versions)
+        if "time" in self._data:
+            return float(self._data["time"])
+        # Compute from step counter
+        if "timestep" in self._data:
+            step = float(self._data["timestep"])
+            return step * self.CC / self.c_omp
+        raise AttributeError(
+            "Could not determine simulation time. Expected a 'time' or "
+            "'timestep' key in the params file."
+        )
 
     @property
     def ppc0(self) -> int:

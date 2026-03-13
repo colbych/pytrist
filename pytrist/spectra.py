@@ -113,13 +113,13 @@ class SpectraSnapshot:
     def gamma_bins(self) -> np.ndarray:
         """Energy bin centres (Lorentz factor γ).
 
-        Tries ``xsl`` first, then ``gamma``, then ``e_bins``.
+        Tries common key names across Tristan-V2 versions.
         Returns the raw array; whether it is bin edges or centres depends
         on the simulation version.
         """
-        for candidate in ["xsl", "gamma", "e_bins", "e"]:
+        for candidate in ["ebins", "xsl", "gamma", "e_bins", "e"]:
             if candidate in self.keys:
-                return self._load(candidate)
+                return self._load(candidate).squeeze()
         raise KeyError(
             f"No energy-axis dataset found in {self.filepath.name}. "
             f"Available keys: {self.keys}"
@@ -149,8 +149,8 @@ class SpectraSnapshot:
         """Return mapping {species_id: dataset_name} for number spectra."""
         mapping: dict[int, str] = {}
         for key in self.keys:
-            # Patterns: dens_sp1, dens_1, dens1, dn_sp1, sp1, …
-            for prefix in ["dens_sp", "dens_", "dn_sp", "sp", "n_sp"]:
+            # Patterns: n1, n2 (Tristan-V2 current), dens_sp1, dens_1, dens1, dn_sp1
+            for prefix in ["n", "dens_sp", "dens_", "dn_sp", "sp", "n_sp"]:
                 if key.startswith(prefix):
                     suffix = key[len(prefix):]
                     if suffix.isdigit():
@@ -184,7 +184,7 @@ class SpectraSnapshot:
                 f"Detected species: {sorted(mapping.keys())}\n"
                 f"Available keys: {self.keys}"
             )
-        return self._load(mapping[species_id])
+        return self._load(mapping[species_id]).squeeze()
 
     # ------------------------------------------------------------------
     # Time

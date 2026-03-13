@@ -289,24 +289,19 @@ class Simulation:
             self._params_cache[step] = SimParams(step_to_path[step])
         return self._params_cache[step]
 
-    def fields(
-        self,
-        step: int,
-        units: str = "code",
-    ) -> FieldSnapshot:
+    def fields(self, step: int) -> FieldSnapshot:
         """Return a FieldSnapshot for *step*.
+
+        The unit converter is always attached so that ``snap.time_ion``
+        and manual ``sim.unit_converter.length(arr)`` calls work without
+        needing to reload the snapshot.  Raw arrays are always in code
+        units; use :attr:`unit_converter` to convert them.
 
         Parameters
         ----------
         step : int
             Step number.
-        units : {'code', 'ion'}
-            If ``'ion'``, attaches the :attr:`unit_converter` to the
-            snapshot so callers can convert arrays.  The raw arrays
-            themselves are unchanged; conversion must be done explicitly
-            via the UnitConverter methods.
         """
-        cache_key = (step, units)
         if step not in self._fields_cache:
             fld_paths = {self._step_from_path(p): p for p in self._scan_flds()}
             if step not in fld_paths:
@@ -314,8 +309,10 @@ class Simulation:
                     f"Field snapshot for step {step} not found. "
                     f"Available steps: {sorted(fld_paths.keys())}"
                 )
-            uc = self.unit_converter if units == "ion" else None
-            # Try to get params for this step (for time info)
+            try:
+                uc = self.unit_converter
+            except FileNotFoundError:
+                uc = None
             try:
                 p = self.params(step)
             except (FileNotFoundError, KeyError):
@@ -325,19 +322,17 @@ class Simulation:
             )
         return self._fields_cache[step]
 
-    def particles(
-        self,
-        step: int,
-        units: str = "code",
-    ) -> ParticleSnapshot:
+    def particles(self, step: int) -> ParticleSnapshot:
         """Return a ParticleSnapshot for *step*.
+
+        The unit converter is always attached so that
+        ``prtl.species(1, units='ion')`` works without needing to reload.
+        Raw arrays are always in code units.
 
         Parameters
         ----------
         step : int
             Step number.
-        units : {'code', 'ion'}
-            If ``'ion'``, attaches the :attr:`unit_converter`.
         """
         if step not in self._particles_cache:
             prtl_paths = {self._step_from_path(p): p for p in self._scan_prtl()}
@@ -346,7 +341,10 @@ class Simulation:
                     f"Particle snapshot for step {step} not found. "
                     f"Available steps: {sorted(prtl_paths.keys())}"
                 )
-            uc = self.unit_converter if units == "ion" else None
+            try:
+                uc = self.unit_converter
+            except FileNotFoundError:
+                uc = None
             try:
                 p = self.params(step)
             except (FileNotFoundError, KeyError):

@@ -146,54 +146,77 @@ class UnitConverter:
         """
         return np.sqrt(self._mass_ratio / self._sigma)
 
+    @property
+    def step_to_wci(self) -> float:
+        """Factor: code step → 1/Ωci_y.
+
+        Tristan-V2 history and params files store time as an integer step
+        counter.  The physical time in 1/ωpe is  t = step × CC/c_omp
+        (since ωpe = CC/c_omp in code units).  Converting further to
+        1/Ωci_y gives the overall factor:
+
+            step[1/Ωci_y] = step × (CC/c_omp) × (√σ/mass_ratio)
+                           = step × CC/c_omp × wpe_to_wci
+        """
+        return (self._CC / self._c_omp) * self.wpe_to_wci
+
     # ------------------------------------------------------------------
     # Array conversion methods
     # ------------------------------------------------------------------
 
     def length(self, arr):
-        """Convert length array from cells to ion inertial lengths (di).
+        """Convert length from cells to ion inertial lengths (di).
 
         Parameters
         ----------
-        arr : array-like
+        arr : float or array-like
             Position data in grid cells.
 
         Returns
         -------
-        numpy.ndarray
-            Position data in di.
+        float or numpy.ndarray
+            Position data in di.  Returns a scalar float when *arr* is a
+            scalar; returns an ndarray when *arr* is array-like.
         """
-        return np.atleast_1d(np.asarray(arr, dtype=float)) * self.cell_to_di
+        a = np.asarray(arr, dtype=float)
+        result = a * self.cell_to_di
+        return float(result) if result.ndim == 0 else result
 
     def time(self, arr):
-        """Convert time array from 1/ωpe to 1/Ωci_y.
+        """Convert time from 1/ωpe to 1/Ωci_y.
 
         Parameters
         ----------
-        arr : array-like
+        arr : float or array-like
             Time data in units of 1/ωpe.
 
         Returns
         -------
-        numpy.ndarray
+        float or numpy.ndarray
             Time data in units of 1/Ωci_y (ion cyclotron periods / 2π).
+            Returns a scalar float when *arr* is a scalar.
         """
-        return np.atleast_1d(np.asarray(arr, dtype=float)) * self.wpe_to_wci
+        a = np.asarray(arr, dtype=float)
+        result = a * self.wpe_to_wci
+        return float(result) if result.ndim == 0 else result
 
     def speed(self, arr):
-        """Convert speed array from c to ion Alfvén speed vAi.
+        """Convert speed from c to ion Alfvén speed vAi.
 
         Parameters
         ----------
-        arr : array-like
+        arr : float or array-like
             Velocity data in units of c.
 
         Returns
         -------
-        numpy.ndarray
-            Velocity data in units of vAi.
+        float or numpy.ndarray
+            Velocity data in units of vAi.  Returns a scalar float when
+            *arr* is a scalar.
         """
-        return np.atleast_1d(np.asarray(arr, dtype=float)) * self.c_to_vAi
+        a = np.asarray(arr, dtype=float)
+        result = a * self.c_to_vAi
+        return float(result) if result.ndim == 0 else result
 
     def field_B(self, arr):
         """Convert magnetic field array to ion-unit normalisation.
