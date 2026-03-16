@@ -37,6 +37,9 @@ import numpy as np
 
 from .units import UnitConverter
 
+# Fields that are normalised by B0 when units != 'code'
+_EM_KEYS: frozenset[str] = frozenset({"bx", "by", "bz", "ex", "ey", "ez"})
+
 
 class FieldSnapshot:
     """Lazy-loading container for a single field snapshot.
@@ -46,14 +49,22 @@ class FieldSnapshot:
     filepath : str or Path
         Path to a ``flds.tot.NNNNN`` HDF5 file.
     unit_converter : UnitConverter, optional
-        If provided, field arrays will be returned in ion units.
-        (For EM fields the numerical values are unchanged; for derived
-        quantities such as density the converter is available via
-        ``self.uc``.)
+        Required when ``units='ion'``.  Also available as ``self.uc``
+        for manual conversions.
     params : SimParams, optional
         Associated simulation parameters snapshot.  Used to populate
         the ``time`` property when the field file itself does not store
         a time attribute.
+    units : {'code', 'ion'}, optional
+        Unit system for returned field arrays.
+
+        * ``'code'`` (default) — raw Tristan code units.  B and E fields
+          have magnitude ~B0 ≈ CC√σ/c_omp upstream.
+        * ``'ion'`` — electromagnetic fields (bx/by/bz/ex/ey/ez) are
+          divided by B0 so that the upstream By ≈ 1.  All other fields
+          (density, current, etc.) are returned unchanged.
+
+        Requires ``unit_converter`` to be set when ``units='ion'``.
     """
 
     def __init__(
@@ -61,7 +72,12 @@ class FieldSnapshot:
         filepath: str | Path,
         unit_converter: UnitConverter | None = None,
         params=None,
+        units: str = "code",
     ) -> None:
+        if units not in ("code", "ion"):
+            raise ValueError(f"units must be 'code' or 'ion', got {units!r}")
+        if units == "ion" and unit_converter is None:
+            raise ValueError("unit_converter must be provided when units='ion'.")
         self.filepath = Path(filepath).resolve()
         if not self.filepath.exists():
             raise FileNotFoundError(
@@ -70,6 +86,7 @@ class FieldSnapshot:
             )
         self.uc = unit_converter
         self._params = params
+        self.units = units
 
         # Cache for lazily loaded arrays
         self._cache: dict[str, np.ndarray] = {}
@@ -114,8 +131,15 @@ class FieldSnapshot:
                 self._cache[key] = f[key][()]
         return self._cache[key]
 
+    def _load_field(self, key: str) -> np.ndarray:
+        """Load *key*, applying B0 normalisation for EM fields when units='ion'."""
+        arr = self._load(key)
+        if self.units == "ion" and key in _EM_KEYS:
+            return self.uc.field_B(arr)   # field_B and field_E both divide by B0
+        return arr
+
     def __getitem__(self, key: str) -> np.ndarray:
-        return self._load(key)
+        return self._load_field(key)
 
     def __getattr__(self, key: str) -> np.ndarray:
         # Avoid infinite recursion for private / dunder attributes
@@ -124,7 +148,7 @@ class FieldSnapshot:
         # Only intercept if key looks like a field name (no dots)
         if "." not in key:
             try:
-                return self._load(key)
+                return self._load_field(key)
             except KeyError as exc:
                 raise AttributeError(str(exc)) from exc
         raise AttributeError(key)
@@ -171,47 +195,47 @@ class FieldSnapshot:
 
     @property
     def ex(self) -> np.ndarray:
-        """Electric field x-component (code units)."""
-        return self._load("ex")
+        """Electric field x-component (normalised to B0 when units='ion')."""
+        return self._load_field("ex")
 
     @property
     def ey(self) -> np.ndarray:
-        """Electric field y-component (code units)."""
-        return self._load("ey")
+        """Electric field y-component (normalised to B0 when units='ion')."""
+        return self._load_field("ey")
 
     @property
     def ez(self) -> np.ndarray:
-        """Electric field z-component (code units)."""
-        return self._load("ez")
+        """Electric field z-component (normalised to B0 when units='ion')."""
+        return self._load_field("ez")
 
     @property
     def bx(self) -> np.ndarray:
-        """Magnetic field x-component (code units, normalised to B0)."""
-        return self._load("bx")
+        """Magnetic field x-component (normalised to B0 when units='ion')."""
+        return self._load_field("bx")
 
     @property
     def by(self) -> np.ndarray:
-        """Magnetic field y-component (code units, normalised to B0)."""
-        return self._load("by")
+        """Magnetic field y-component (normalised to B0 when units='ion')."""
+        return self._load_field("by")
 
     @property
     def bz(self) -> np.ndarray:
-        """Magnetic field z-component (code units, normalised to B0)."""
-        return self._load("bz")
+        """Magnetic field z-component (normalised to B0 when units='ion')."""
+        return self._load_field("bz")
 
     @property
     def jx(self) -> np.ndarray:
-        """Current density x-component."""
+        """Current density x-component (code units)."""
         return self._load("jx")
 
     @property
     def jy(self) -> np.ndarray:
-        """Current density y-component."""
+        """Current density y-component (code units)."""
         return self._load("jy")
 
     @property
     def jz(self) -> np.ndarray:
-        """Current density z-component."""
+        """Current density z-component (code units)."""
         return self._load("jz")
 
     # ------------------------------------------------------------------
@@ -257,6 +281,7 @@ class FieldSnapshot:
         return (
             f"FieldSnapshot(step={self.step}, "
             f"time={t_str}/ωpe, "
+            f"units='{self.units}', "
             f"file='{self.filepath.name}')"
         )
 
@@ -272,6 +297,8 @@ class FieldLoader:
         Passed through to each ``FieldSnapshot``.
     params_map : dict[int, SimParams], optional
         Mapping from step number to SimParams, for time information.
+    units : {'code', 'ion'}, optional
+        Passed through to each ``FieldSnapshot``.
     """
 
     def __init__(
@@ -279,10 +306,12 @@ class FieldLoader:
         filepaths: list[Path],
         unit_converter: UnitConverter | None = None,
         params_map: dict | None = None,
+        units: str = "code",
     ) -> None:
         self._filepaths: dict[int, Path] = {}
         self.uc = unit_converter
         self._params_map = params_map or {}
+        self._units = units
         self._snapshots: dict[int, FieldSnapshot] = {}
 
         for fp in filepaths:
@@ -309,6 +338,7 @@ class FieldLoader:
                 self._filepaths[step],
                 unit_converter=self.uc,
                 params=self._params_map.get(step),
+                units=self._units,
             )
         return self._snapshots[step]
 

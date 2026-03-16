@@ -148,7 +148,7 @@ class Simulation:
         self._param_paths: list[Path] | None = None
 
         self._params_cache: dict[int, SimParams] = {}
-        self._fields_cache: dict[int, FieldSnapshot] = {}
+        self._fields_cache: dict[tuple[int, str], FieldSnapshot] = {}
         self._particles_cache: dict[int, ParticleSnapshot] = {}
         self._spectra_cache: dict[int, SpectraSnapshot] = {}
         self._moments_cache: dict[int, ParticleMoments] = {}
@@ -291,20 +291,21 @@ class Simulation:
             self._params_cache[step] = SimParams(step_to_path[step])
         return self._params_cache[step]
 
-    def fields(self, step: int) -> FieldSnapshot:
+    def fields(self, step: int, units: str = "code") -> FieldSnapshot:
         """Return a FieldSnapshot for *step*.
-
-        The unit converter is always attached so that ``snap.time_ion``
-        and manual ``sim.unit_converter.length(arr)`` calls work without
-        needing to reload the snapshot.  Raw arrays are always in code
-        units; use :attr:`unit_converter` to convert them.
 
         Parameters
         ----------
         step : int
             Step number.
+        units : {'code', 'ion'}, optional
+            * ``'code'`` (default) — raw Tristan code units.
+            * ``'ion'`` — electromagnetic fields (bx/by/bz/ex/ey/ez)
+              are automatically divided by B0 = CC√σ/c_omp so that the
+              upstream By ≈ 1.
         """
-        if step not in self._fields_cache:
+        cache_key = (step, units)
+        if cache_key not in self._fields_cache:
             fld_paths = {self._step_from_path(p): p for p in self._scan_flds()}
             if step not in fld_paths:
                 raise KeyError(
@@ -319,10 +320,10 @@ class Simulation:
                 p = self.params(step)
             except (FileNotFoundError, KeyError):
                 p = None
-            self._fields_cache[step] = FieldSnapshot(
-                fld_paths[step], unit_converter=uc, params=p
+            self._fields_cache[cache_key] = FieldSnapshot(
+                fld_paths[step], unit_converter=uc, params=p, units=units
             )
-        return self._fields_cache[step]
+        return self._fields_cache[cache_key]
 
     def particles(self, step: int) -> ParticleSnapshot:
         """Return a ParticleSnapshot for *step*.

@@ -147,6 +147,19 @@ class UnitConverter:
         return np.sqrt(self._mass_ratio / self._sigma)
 
     @property
+    def B0(self) -> float:
+        """Background magnetic field magnitude in Tristan code units.
+
+        Tristan-V2 uses Gaussian-unit Maxwell equations with an explicit
+        speed of light (``∂B/∂t = -CC ∇×E``), so the cyclotron frequency
+        in code units is ``ωce = B_code / CC`` (not ``B_code``).  Solving
+        ``σ = ωce² / ωpe² = (B0/CC)² / (CC/c_omp)²``:
+
+            B0 = CC² × √σ / c_omp
+        """
+        return self._CC ** 2 * np.sqrt(self._sigma) / self._c_omp
+
+    @property
     def step_to_wci(self) -> float:
         """Factor: code step → 1/Ωci_y.
 
@@ -219,43 +232,42 @@ class UnitConverter:
         return float(result) if result.ndim == 0 else result
 
     def field_B(self, arr):
-        """Convert magnetic field array to ion-unit normalisation.
+        """Normalise a magnetic field array to B0.
 
-        In Tristan-V2 B fields are stored normalised to B0 (the background
-        field magnitude).  B0 defines σ, so in ion units B0 ≡ 1 by
-        convention.  The conversion factor is therefore 1.0 (the numerical
-        values are unchanged; the *unit label* changes from B0 to
-        "vAi√(4π n0 mi)" etc., but the numbers are the same).
+        Tristan-V2 stores B fields in raw code units where the upstream
+        guide field has magnitude B0 = CC × √σ / c_omp ≈ O(0.01).
+        Dividing by B0 gives dimensionless values where the upstream
+        By ≈ 1 (and B0 ≡ 1 in ion units).
 
         Parameters
         ----------
         arr : array-like
-            Magnetic field data (code units, normalised to B0).
+            Magnetic field data in Tristan code units.
 
         Returns
         -------
         numpy.ndarray
-            Magnetic field data (ion units, normalised to B0 ≡ 1).
+            Magnetic field normalised to B0 (upstream ≈ 1).
         """
-        return np.asarray(arr, dtype=float)
+        return np.asarray(arr, dtype=float) / self.B0
 
     def field_E(self, arr):
-        """Convert electric field array to ion-unit normalisation.
+        """Normalise an electric field array to B0.
 
-        E fields are stored in the same normalisation as B × c in code
-        units.  The ion-unit conversion is identical to field_B (factor 1).
+        E fields in Tristan-V2 are stored in the same code units as B
+        (both ~ B0 upstream), so the same B0 factor applies.
 
         Parameters
         ----------
         arr : array-like
-            Electric field data (code units).
+            Electric field data in Tristan code units.
 
         Returns
         -------
         numpy.ndarray
-            Electric field data (ion units).
+            Electric field normalised to B0.
         """
-        return np.asarray(arr, dtype=float)
+        return np.asarray(arr, dtype=float) / self.B0
 
     # ------------------------------------------------------------------
     # Representation
@@ -281,6 +293,7 @@ class UnitConverter:
             f"  CC (c in code units)   = {self._CC:.4g}",
             "",
             "Derived scales:",
+            f"  B0 (code units)        = {self.B0:.6g}",
             f"  di in cells            = {self.di_in_cells:.4g}",
             f"  vAi / c                = {self.vAi_over_c:.4g}",
             f"  Ωci / ωpe              = {self.Omega_ci_over_wpe:.4g}",
@@ -289,5 +302,6 @@ class UnitConverter:
             f"  cell_to_di             = {self.cell_to_di:.6g}",
             f"  wpe_to_wci             = {self.wpe_to_wci:.6g}",
             f"  c_to_vAi               = {self.c_to_vAi:.6g}",
+            f"  field_B/E: ÷ B0        = {self.B0:.6g}",
         ]
         return "\n".join(lines)

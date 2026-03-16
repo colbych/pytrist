@@ -240,27 +240,34 @@ class TestFieldConversion:
         arr = np.array([1.0, 2.0, 3.0])
         result = uc_standard.field_B(arr)
         assert result.dtype == np.float64
-        np.testing.assert_array_equal(result, arr)
 
     def test_field_E_returns_float_array(self, uc_standard):
         arr = np.array([0.5, -0.5])
         result = uc_standard.field_E(arr)
         assert result.dtype == np.float64
-        np.testing.assert_array_equal(result, arr.astype(float))
 
-    def test_field_B_preserves_values(self, uc_standard):
-        """B fields normalised to B0 are dimensionless; values unchanged."""
-        arr = np.array([0.0, 0.5, 1.0, -2.3])
-        np.testing.assert_allclose(uc_standard.field_B(arr), arr, rtol=1e-15)
+    def test_field_B_normalises_by_B0(self, uc_standard):
+        """field_B divides by B0 so that the upstream field ≈ 1."""
+        B0 = uc_standard.B0
+        arr = np.array([0.0, B0, 2 * B0, -B0])
+        expected = np.array([0.0, 1.0, 2.0, -1.0])
+        np.testing.assert_allclose(uc_standard.field_B(arr), expected, rtol=1e-12)
 
-    def test_field_E_preserves_values(self, uc_standard):
-        arr = np.array([0.0, 0.1, -0.1])
-        np.testing.assert_allclose(uc_standard.field_E(arr), arr, rtol=1e-15)
+    def test_field_E_normalises_by_B0(self, uc_standard):
+        """field_E uses the same B0 normalisation as field_B."""
+        B0 = uc_standard.B0
+        arr = np.array([0.0, B0, -B0])
+        expected = np.array([0.0, 1.0, -1.0])
+        np.testing.assert_allclose(uc_standard.field_E(arr), expected, rtol=1e-12)
 
-    def test_scalar_input(self, uc_standard):
-        result = uc_standard.field_B(1.0)
-        assert isinstance(result, np.ndarray)
-        assert float(result) == pytest.approx(1.0)
+    def test_B0_formula(self, uc_standard):
+        """B0 = CC^2 * sqrt(sigma) / c_omp (Gaussian PIC convention)."""
+        expected = 0.45 ** 2 * np.sqrt(0.1) / 10.0
+        assert uc_standard.B0 == pytest.approx(expected, rel=1e-12)
+
+    def test_field_B_scalar_input(self, uc_standard):
+        result = uc_standard.field_B(uc_standard.B0)
+        assert float(result) == pytest.approx(1.0, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------
