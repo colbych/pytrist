@@ -29,6 +29,7 @@ Usage example::
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +38,13 @@ import numpy as np
 
 from .units import UnitConverter
 
-# Fields that are normalised by B0 when units != 'code'
+# Fields that are normalised by B0 when units='ion'
 _EM_KEYS: frozenset[str] = frozenset({"bx", "by", "bz", "ex", "ey", "ez"})
+
+# Regex patterns for per-species moment fields (both dens1 and dens_1 style)
+_DENS_RE = re.compile(r"^dens_?(\d+)$")          # dens1, dens_1, dens2, …
+_VEL_RE = re.compile(r"^vel([xyz])_?(\d*)$")     # velx, velx1, velx_1, …
+_STRESS_RE = re.compile(r"^T([XYZ0]{2})_?(\d+)$")  # TXX1, TYY2, TXZ1, T0X1, …
 
 
 class FieldSnapshot:
@@ -60,9 +66,18 @@ class FieldSnapshot:
 
         * ``'code'`` (default) — raw Tristan code units.  B and E fields
           have magnitude ~B0 ≈ CC√σ/c_omp upstream.
-        * ``'ion'`` — electromagnetic fields (bx/by/bz/ex/ey/ez) are
-          divided by B0 so that the upstream By ≈ 1.  All other fields
-          (density, current, etc.) are returned unchanged.
+        * ``'ion'`` — applies physical normalisation automatically:
+
+          - **B / E fields** (bx/by/bz/ex/ey/ez): divided by B0 → upstream By ≈ 1.
+          - **Number density** (dens1, dens_1, …): divided by ``m_k × n0``
+            (where ``n0 = ppc0/2``) → dimensionless, upstream ≈ 1.
+          - **Bulk velocity** (velx, vely, velz, velx1, …): multiplied by
+            ``c_to_vAi = √(mass_ratio/σ)`` → units of vAi.
+          - **Stress tensor** (TXX1, TYY2, TXZ1, …): divided by ``m_k × n0``
+            then multiplied by ``c_to_vAi²`` → units of n0 × vAi².
+            Dividing a stress component by density gives temperature in vAi².
+          - All other fields (currents, energy density, etc.) are returned
+            unchanged.
 
         Requires ``unit_converter`` to be set when ``units='ion'``.
     """
@@ -100,6 +115,28 @@ class FieldSnapshot:
         except (ValueError, IndexError):
             self.step = -1
 
+        # Extract n0 and per-species masses from params (used for ion-unit normalisation)
+        self._n0: float | None = None
+        self._species_mass: dict[int, float] = {}
+        if params is not None:
+            for key in ("plasma:ppc0", "ppc0", "ppc"):
+                try:
+                    val = params[key]
+                    if val is not None:
+                        self._n0 = float(val) / 2.0
+                        break
+                except (KeyError, TypeError, AttributeError):
+                    pass
+            for sid in range(1, 9):
+                for mk in (f"particles:m{sid}", f"m{sid}"):
+                    try:
+                        val = params[mk]
+                        if val is not None:
+                            self._species_mass[sid] = float(val)
+                            break
+                    except (KeyError, TypeError, AttributeError):
+                        pass
+
     # ------------------------------------------------------------------
     # Key / dataset discovery
     # ------------------------------------------------------------------
@@ -132,10 +169,35 @@ class FieldSnapshot:
         return self._cache[key]
 
     def _load_field(self, key: str) -> np.ndarray:
-        """Load *key*, applying B0 normalisation for EM fields when units='ion'."""
+        """Load *key*, applying unit normalisation when units='ion'."""
         arr = self._load(key)
-        if self.units == "ion" and key in _EM_KEYS:
-            return self.uc.field_B(arr)   # field_B and field_E both divide by B0
+        if self.units != "ion":
+            return arr
+
+        # EM fields → divide by B0 (upstream By ≈ 1)
+        if key in _EM_KEYS:
+            return self.uc.field_B(arr)
+
+        # Number density dens{k} or dens_{k} → divide by m_k × n0
+        m = _DENS_RE.match(key)
+        if m:
+            sid = int(m.group(1))
+            m_k = self._species_mass.get(sid, 1.0)
+            n0 = self._n0 if self._n0 is not None else 1.0
+            return arr / (m_k * n0)
+
+        # Bulk velocity vel{x/y/z}[{k}] → multiply by c_to_vAi
+        if _VEL_RE.match(key):
+            return arr * self.uc.c_to_vAi
+
+        # Stress tensor T{ij}{k} → divide by m_k × n0, convert c² → vAi²
+        m = _STRESS_RE.match(key)
+        if m:
+            sid = int(m.group(2))
+            m_k = self._species_mass.get(sid, 1.0)
+            n0 = self._n0 if self._n0 is not None else 1.0
+            return arr / (m_k * n0) * self.uc.c_to_vAi ** 2
+
         return arr
 
     def __getitem__(self, key: str) -> np.ndarray:
