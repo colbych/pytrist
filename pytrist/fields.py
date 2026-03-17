@@ -115,9 +115,10 @@ class FieldSnapshot:
         except (ValueError, IndexError):
             self.step = -1
 
-        # Extract n0 and per-species masses from params (used for ion-unit normalisation)
+        # Extract n0, per-species masses, and charges from params
         self._n0: float | None = None
         self._species_mass: dict[int, float] = {}
+        self._species_charge: dict[int, float] = {}
         if params is not None:
             for key in ("plasma:ppc0", "ppc0", "ppc"):
                 try:
@@ -133,6 +134,14 @@ class FieldSnapshot:
                         val = params[mk]
                         if val is not None:
                             self._species_mass[sid] = float(val)
+                            break
+                    except (KeyError, TypeError, AttributeError):
+                        pass
+                for ck in (f"particles:ch{sid}", f"particles:q{sid}", f"ch{sid}", f"q{sid}"):
+                    try:
+                        val = params[ck]
+                        if val is not None:
+                            self._species_charge[sid] = float(val)
                             break
                     except (KeyError, TypeError, AttributeError):
                         pass
@@ -313,6 +322,73 @@ class FieldSnapshot:
     def e_magnitude(self) -> np.ndarray:
         """Total electric field magnitude |E|."""
         return np.sqrt(self.ex**2 + self.ey**2 + self.ez**2)
+
+    def bulk_velocity(
+        self,
+        species_id: int,
+    ) -> dict[str, np.ndarray]:
+        """Bulk velocity of a species computed from the field-file current density.
+
+        Uses the relation  v_k = (m_k / q_k) × jprt_k / dens_k  where
+        ``jprtX{k}`` is the charge-current density and ``dens{k}`` is the
+        mass density stored in the field file.
+
+        Parameters
+        ----------
+        species_id : int
+            Species index (1 = electrons, 2 = ions, etc.).
+
+        Returns
+        -------
+        dict with keys 'vx', 'vy', 'vz'
+            Bulk velocity arrays.  Units depend on ``self.units``:
+            * ``'code'`` — units of c.
+            * ``'ion'``  — units of vAi.
+
+        Raises
+        ------
+        ValueError
+            If species mass or charge cannot be determined.
+        KeyError
+            If the required field-file datasets are absent.
+        """
+        sid = species_id
+        m_k = self._species_mass.get(sid)
+        q_k = self._species_charge.get(sid)
+        if m_k is None:
+            raise ValueError(
+                f"Mass for species {sid} not found. "
+                "Provide a params file when constructing FieldSnapshot."
+            )
+        if q_k is None:
+            raise ValueError(
+                f"Charge for species {sid} not found. "
+                "Provide a params file when constructing FieldSnapshot."
+            )
+        if q_k == 0:
+            raise ValueError(f"Species {sid} has zero charge; bulk velocity undefined.")
+
+        # Load raw (code-unit) current and density
+        jx = self._load(f"jprtX{sid}")
+        jy = self._load(f"jprtY{sid}")
+        jz = self._load(f"jprtZ{sid}")
+        dens = self._load(f"dens{sid}")
+
+        # Safe inverse density (avoid dividing by zero in empty cells)
+        inv_dens = np.where(dens > 0, 1.0 / np.where(dens > 0, dens, 1.0), 0.0)
+
+        # v_k = (m_k / q_k) * j_k / dens_k    [units: c]
+        factor = m_k / q_k
+        vx = factor * jx * inv_dens
+        vy = factor * jy * inv_dens
+        vz = factor * jz * inv_dens
+
+        if self.units == "ion" and self.uc is not None:
+            vx = vx * self.uc.c_to_vAi
+            vy = vy * self.uc.c_to_vAi
+            vz = vz * self.uc.c_to_vAi
+
+        return {"vx": vx, "vy": vy, "vz": vz}
 
     # ------------------------------------------------------------------
     # Bulk release / cache management
