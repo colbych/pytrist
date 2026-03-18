@@ -73,9 +73,11 @@ class FieldSnapshot:
             (where ``n0 = ppc0/2``) → dimensionless, upstream ≈ 1.
           - **Bulk velocity** (velx, vely, velz, velx1, …): multiplied by
             ``c_to_vAi = √(mass_ratio/σ)`` → units of vAi.
-          - **Stress tensor** (TXX1, TYY2, TXZ1, …): divided by ``m_k × n0``
-            then multiplied by ``c_to_vAi²`` → units of n0 × vAi².
-            Dividing a stress component by density gives temperature in vAi².
+          - **Stress tensor** (TXX1, TYY2, TXZ1, …): divided by ``n0 × mass_ratio``
+            then multiplied by ``c_to_vAi²`` → units of ``(n/n0) × (m_k/m_i) × vAi²``.
+            Dividing by density gives temperature ``T = (m_k/m_i) ⟨δv²⟩ c_to_vAi²``
+            in units of m_i vAi², equal for both species in an equal-temperature
+            plasma (e.g. T_e = T_i ≈ 0.1 m_i vAi² upstream if initialized equal).
           - All other fields (currents, energy density, etc.) are returned
             unchanged.
 
@@ -199,13 +201,16 @@ class FieldSnapshot:
         if _VEL_RE.match(key):
             return arr * self.uc.c_to_vAi
 
-        # Stress tensor T{ij}{k} → divide by m_k × n0, convert c² → vAi²
+        # Stress tensor T{ij}{k} → T = (m_k/m_i) ⟨δv²⟩ c_to_vAi²  [m_i vAi²]
+        # TXX_k (code) ≈ m_k × n × ⟨δv²⟩.
+        # Dividing by n0 × m_i and multiplying by c_to_vAi² gives pressure
+        # (n/n0) × (m_k/m_i) × ⟨δv²⟩ × c_to_vAi².  After dividing by density
+        # the intensive temperature T = (m_k/m_i) ⟨δv²⟩ c_to_vAi² is equal
+        # for both species in an equal-temperature plasma (T_e = T_i).
         m = _STRESS_RE.match(key)
         if m:
-            sid = int(m.group(2))
-            m_k = self._species_mass.get(sid, 1.0)
             n0 = self._n0 if self._n0 is not None else 1.0
-            return arr / (m_k * n0) * self.uc.c_to_vAi ** 2
+            return arr / (n0 * self.uc.mass_ratio) * self.uc.c_to_vAi ** 2
 
         return arr
 

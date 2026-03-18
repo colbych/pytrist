@@ -415,6 +415,7 @@ class Simulation:
         self,
         step: int,
         region: tuple[int, int, int, int] | None = None,
+        bessel_correction: bool = True,
     ) -> ParticleMoments:
         """Return a :class:`~pytrist.moments.ParticleMoments` for *step*.
 
@@ -427,8 +428,12 @@ class Simulation:
         region : tuple of int, optional
             ``(x0, x1, y0, y1)`` in cell indices (half-open).
             Defaults to the full simulation box.
+        bessel_correction : bool, optional
+            Apply the Bessel correction to per-cell variance estimates
+            (see :class:`~pytrist.moments.ParticleMoments`).  Default ``True``.
+            Set to ``False`` to recover the raw biased estimator.
         """
-        cache_key: int | None = step if region is None else None
+        cache_key: int | None = step if (region is None and bessel_correction) else None
         if cache_key is not None and cache_key in self._moments_cache:
             return self._moments_cache[cache_key]
 
@@ -442,7 +447,10 @@ class Simulation:
         except (FileNotFoundError, KeyError):
             p = None
 
-        obj = ParticleMoments(prtl, params=p, unit_converter=uc, region=region)
+        obj = ParticleMoments(
+            prtl, params=p, unit_converter=uc, region=region,
+            bessel_correction=bessel_correction,
+        )
         if cache_key is not None:
             self._moments_cache[cache_key] = obj
         return obj

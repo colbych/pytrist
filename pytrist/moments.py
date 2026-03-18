@@ -4,9 +4,16 @@ Fluid moments computed from particle data for Tristan-MP V2 simulations.
 Moments are computed by binning macro-particles onto the simulation grid
 using a nearest-grid-point (NGP) scheme (``np.histogram2d``).  Results will
 differ slightly from Tristan's own field outputs (``dens1``, ``TXX1``, …),
-which use a cloud-in-cell (CIC) deposit with spatial smoothing, but the
-two should agree to within ~5–20% depending on the quantity and the spatial
-scale being averaged over.
+which use a cloud-in-cell (CIC) deposit with spatial smoothing.
+
+A Bessel correction is applied by default to the per-cell variance estimator
+used for the temperature tensor.  Without it, the NGP estimator
+``<u²> - <u>²`` underestimates the true variance by a factor ``(N-1)/N`` in
+each cell, where N is the number of macro-particles in that cell.  With a
+large output stride (e.g. ``stride=10``) the upstream region may have only
+~3–4 particles/cell, causing a systematic ~25–35% downward bias.  The Bessel
+correction removes this bias at the cost of increased noise in sparsely
+populated cells.
 
 Typical usage::
 
@@ -87,6 +94,15 @@ class ParticleMoments:
     n0 : float, optional
         Reference single-species density (ppc0/2).  If not provided,
         read from params.  Required for moment computation.
+    bessel_correction : bool, optional
+        If ``True`` (default), apply the Bessel correction to the per-cell
+        variance estimator used for the temperature tensor.  With NGP
+        binning the biased estimator ``<u²> - <u>²`` underestimates the
+        true variance by ``(N-1)/N`` in each cell, where N is the particle
+        count.  This matters most when the output stride is large and only
+        a few particles fall in each cell.  The corrected factor is
+        ``N/(N-1)`` (or the weighted analogue ``V₀²/(V₀²-V₂)``).
+        Set to ``False`` to recover the biased estimator.
     """
 
     def __init__(
@@ -96,17 +112,32 @@ class ParticleMoments:
         unit_converter: UnitConverter | None = None,
         region: tuple[int, int, int, int] | None = None,
         n0: float | None = None,
+        bessel_correction: bool = True,
     ) -> None:
         self._prtl = particle_snapshot
         self._params = params
         self.uc = unit_converter
         self._cache: dict[tuple, np.ndarray] = {}
 
+        self._bessel_correction = bessel_correction
         self._stride = _get_stride(params)
         if n0 is not None:
             self._n0: float | None = float(n0)
         else:
             self._n0 = _get_n0(params)
+
+        # Per-species masses (in units of m_e) for temperature normalisation
+        self._species_mass: dict[int, float] = {}
+        if params is not None:
+            for sid in range(1, 9):
+                for mk in (f"particles:m{sid}", f"m{sid}"):
+                    try:
+                        val = params[mk]
+                        if val is not None:
+                            self._species_mass[sid] = float(val)
+                            break
+                    except (KeyError, TypeError, AttributeError):
+                        pass
         nx, ny = self._read_grid_size()
         self._nx_full = nx
         self._ny_full = ny
@@ -224,13 +255,27 @@ class ParticleMoments:
         avg_uw = np.where(valid, _bin2d(wei * u * w) / sum_wei, 0.0)
         avg_vw = np.where(valid, _bin2d(wei * v * w) / sum_wei, 0.0)
 
-        # ----- pressure tensor: P_ij = n × (<ui uj> - Vi Vj) -----
-        Txx = avg_uu - Vx * Vx
-        Tyy = avg_vv - Vy * Vy
-        Tzz = avg_ww - Vz * Vz
-        Txy = avg_uv - Vx * Vy
-        Txz = avg_uw - Vx * Vz
-        Tyz = avg_vw - Vy * Vz
+        # ----- Bessel correction for per-cell variance -----
+        # The biased estimator <u²> - <u>² = (N-1)/N × σ² where N = particle
+        # count per cell.  Multiply by N/(N-1) to get the unbiased estimator.
+        # For general weights use the weighted analogue: V0=Σwi, V2=Σwi²,
+        #   bessel = V0² / (V0² - V2)  →  N/(N-1) when all wi = 1.
+        # Cells with ≤1 effective particle already give T=0 from the biased
+        # formula; we keep that (bessel=0) so no spurious values appear.
+        if self._bessel_correction:
+            sum_wei_sq = _bin2d(wei * wei)
+            denom_b = sum_wei * sum_wei - sum_wei_sq
+            bessel = np.where(denom_b > 0, sum_wei * sum_wei / denom_b, 0.0)
+        else:
+            bessel = np.ones_like(sum_wei)
+
+        # ----- pressure tensor: P_ij = n × bessel × (<ui uj> - Vi Vj) -----
+        Txx = (avg_uu - Vx * Vx) * bessel
+        Tyy = (avg_vv - Vy * Vy) * bessel
+        Tzz = (avg_ww - Vz * Vz) * bessel
+        Txy = (avg_uv - Vx * Vy) * bessel
+        Txz = (avg_uw - Vx * Vz) * bessel
+        Tyz = (avg_vw - Vy * Vz) * bessel
 
         self._cache[("Pxx", sid)] = n * Txx
         self._cache[("Pyy", sid)] = n * Tyy
@@ -322,16 +367,18 @@ class ParticleMoments:
     def temperature_tensor(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Pressure tensor  P_ij = n × (<ui uj> − Vi Vj).
+        """Pressure tensor  P_ij = n × (m_k/m_i) × (<ui uj> − Vi Vj).
 
-        Extensive quantity: multiply the intensive temperature tensor by the
-        dimensionless density n/n0.  Upstream value ≈ T_upstream.
+        Extensive quantity.  Dividing by density gives the intensive temperature
+        T_ij = (m_k/m_i) ⟨δvi δvj⟩ c_to_vAi², in units of m_i vAi².
+        For an equal-temperature plasma T_e = T_i upstream (both ≈ 0.1 m_i vAi²).
 
         Parameters
         ----------
         species_id : int
         units : {'code', 'ion'}
-            ``'code'`` → c²;  ``'ion'`` → vAi².
+            ``'code'`` → c²;  ``'ion'`` → m_i vAi² (equal for both species
+            in equilibrium).
 
         Returns
         -------
@@ -354,7 +401,8 @@ class ParticleMoments:
                 raise ValueError(
                     "unit_converter must be provided for units='ion'."
                 )
-            f = self.uc.c_to_vAi ** 2
+            m_k = self._species_mass.get(sid, 1.0)
+            f = (m_k / self.uc.mass_ratio) * self.uc.c_to_vAi ** 2
             result = {k: v * f for k, v in result.items()}
 
         return result
@@ -387,10 +435,9 @@ class ParticleMoments:
     def heat_flux(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Extensive heat flux  Q_i = n × ½<|δu|² δu_i>.
+        """Extensive heat flux  Q_i = n × (m_k/m_i) × ½<|δu|² δu_i>.
 
-        Extensive quantity: the intensive heat flux multiplied by n/n0.
-
+        Extensive quantity consistent with the temperature tensor normalisation.
         The intensive heat flux is defined as the third-order velocity moment
         in the bulk-flow frame::
 
@@ -400,7 +447,7 @@ class ParticleMoments:
         ----------
         species_id : int
         units : {'code', 'ion'}
-            ``'code'`` → c³;  ``'ion'`` → vAi³.
+            ``'code'`` → c³;  ``'ion'`` → m_i vAi³.
 
         Returns
         -------
@@ -417,7 +464,8 @@ class ParticleMoments:
                 raise ValueError(
                     "unit_converter must be provided for units='ion'."
                 )
-            f = self.uc.c_to_vAi ** 3
+            m_k = self._species_mass.get(species_id, 1.0)
+            f = (m_k / self.uc.mass_ratio) * self.uc.c_to_vAi ** 3
             qx, qy, qz = qx * f, qy * f, qz * f
 
         return {"x": qx, "y": qy, "z": qz}
