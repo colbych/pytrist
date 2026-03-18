@@ -169,9 +169,12 @@ _row(["vExB_x (vAi)", "vExB_y (vAi)", "vExB_z (vAi)"],
 plt.suptitle(f"E×B drift velocity — step {STEP}", y=1.02)
 _savefig("ExB_drift")
 
-up_mask_b = B2 > 0.5
-print(f"  Upstream |vExB_x| (|B|>0.7 B0): {np.nanmedian(np.abs(vExB_x[up_mask_b])):.4f} vAi  (expect ~ 0)")
-print(f"  Upstream |vExB_z| (|B|>0.7 B0): {np.nanmedian(np.abs(vExB_z[up_mask_b])):.4f} vAi  (expect ~ 0)")
+# Use the upper quartile of B2 to define "strong field" cells — robust to
+# any overall B magnitude (B0 may differ across simulations).
+B2_thresh  = np.nanpercentile(B2, 50)   # median B2; upstream cells are above this
+up_mask_b  = B2 > B2_thresh
+print(f"  Upstream |vExB_x| (|B|² > median): {np.nanmedian(np.abs(vExB_x[up_mask_b])):.4f} vAi  (expect ~ 0)")
+print(f"  Upstream |vExB_z| (|B|² > median): {np.nanmedian(np.abs(vExB_z[up_mask_b])):.4f} vAi  (expect ~ 0)")
 
 
 # ── 4. Ion bulk flow (field file) ─────────────────────────────────────────────
@@ -195,30 +198,43 @@ _savefig("Ve_field")
 
 
 # ── 6. ExB vs bulk flow diagnostics (text only) ───────────────────────────────
-strong_B = (B2 > 0.25) & np.isfinite(vExB_x)
+# Use a percentile-based threshold so the check works for any B normalization.
+strong_B = (B2 > B2_thresh) & np.isfinite(vExB_x)
 
-rms_ExB = np.nanstd(vExB_x[strong_B])
-rms_Ve  = np.nanstd(Ve["vx"][0][strong_B])
-rms_Vi  = np.nanstd(Vi["vx"][0][strong_B])
-print(f"\nIdeal-MHD check (|B| > 0.5 B0):")
-print(f"  RMS |vExB_x| = {rms_ExB:.4f} vAi")
-print(f"  RMS |Ve_x|   = {rms_Ve:.4f} vAi")
-print(f"  RMS |Vi_x|   = {rms_Vi:.4f} vAi")
-
-upstream_T_code = float(p["problem:upstream_T"])
-v_th_vAi  = np.sqrt(upstream_T_code) * uc.c_to_vAi
-shot_noise = v_th_vAi / np.sqrt(p.ppc0 / 2)
-print(f"  Shot-noise floor ~ {shot_noise:.4f} vAi  (v_th={v_th_vAi:.3f} vAi)")
-
-if rms_Ve < 2 * shot_noise:
-    print("  WARNING: Ve_x is noise-dominated at this step.")
+print(f"\nIdeal-MHD check (|B|² > median = {B2_thresh:.4f} B0²):")
+if strong_B.sum() == 0:
+    print("  WARNING: no finite ExB cells above the B threshold — skipping.")
 else:
-    mask_e = strong_B & np.isfinite(Ve["vx"][0])
-    mask_i = strong_B & np.isfinite(Vi["vx"][0])
-    slope_e = np.polyfit(Ve["vx"][0][mask_e], vExB_x[mask_e], 1)
-    slope_i = np.polyfit(Vi["vx"][0][mask_i], vExB_x[mask_i], 1)
-    print(f"  vExB_x = {slope_e[0]:.3f} x Ve_x + {slope_e[1]:.4f}  (ideal MHD -> +1.0)")
-    print(f"  vExB_x = {slope_i[0]:.3f} x Vi_x + {slope_i[1]:.4f}")
+    rms_ExB = np.nanstd(vExB_x[strong_B])
+    rms_Ve  = np.nanstd(Ve["vx"][0][strong_B])
+    rms_Vi  = np.nanstd(Vi["vx"][0][strong_B])
+    print(f"  RMS |vExB_x| = {rms_ExB:.4f} vAi")
+    print(f"  RMS |Ve_x|   = {rms_Ve:.4f} vAi")
+    print(f"  RMS |Vi_x|   = {rms_Vi:.4f} vAi")
+
+# upstream_T_code is optional: some simulations don't store it in params.
+upstream_T_code = None
+for key in ("problem:upstream_T", "problem:T0", "plasma:T0", "upstream_T"):
+    try:
+        upstream_T_code = float(p[key])
+        print(f"  upstream_T = {upstream_T_code:.6g} c²  (from params key '{key}')")
+        break
+    except (KeyError, TypeError):
+        pass
+
+if upstream_T_code is not None and strong_B.sum() > 0:
+    v_th_vAi  = np.sqrt(upstream_T_code) * uc.c_to_vAi
+    shot_noise = v_th_vAi / np.sqrt(p.ppc0 / 2)
+    print(f"  Shot-noise floor ~ {shot_noise:.4f} vAi  (v_th={v_th_vAi:.3f} vAi)")
+    if rms_Ve < 2 * shot_noise:
+        print("  WARNING: Ve_x is noise-dominated at this step.")
+    else:
+        mask_e = strong_B & np.isfinite(Ve["vx"][0])
+        mask_i = strong_B & np.isfinite(Vi["vx"][0])
+        slope_e = np.polyfit(Ve["vx"][0][mask_e], vExB_x[mask_e], 1)
+        slope_i = np.polyfit(Vi["vx"][0][mask_i], vExB_x[mask_i], 1)
+        print(f"  vExB_x = {slope_e[0]:.3f} x Ve_x + {slope_e[1]:.4f}  (ideal MHD -> +1.0)")
+        print(f"  vExB_x = {slope_i[0]:.3f} x Vi_x + {slope_i[1]:.4f}")
 
 
 # ── 7. Bulk flow: field-file vs moments ───────────────────────────────────────
@@ -264,7 +280,7 @@ for sid, name, Vf, Vm in [(2, "Ion", Vi, Vi_moms), (1, "Electron", Ve, Ve_moms)]
 
 
 # ── 8. ExB vs bulk flow regression ───────────────────────────────────────────
-strong_B2 = (B2 > 0.25) & np.isfinite(vExB_z)
+strong_B2 = (B2 > B2_thresh) & np.isfinite(vExB_z)
 print("\nExB vs bulk flow regression:")
 mask = strong_B2 & np.isfinite(Ve["vz"][0])
 if mask.sum() > 10:
@@ -300,11 +316,15 @@ for comp, key in [("xx", "TXX1"), ("yy", "TYY1"), ("zz", "TZZ1"),
                   ("xy", "TXY1"), ("xz", "TXZ1"), ("yz", "TYZ1")]:
     Te[comp] = flds[key][0] / n_e_safe
 
-upstream_Te = upstream_T_code * uc.c_to_vAi ** 2 / uc.mass_ratio
+upstream_Te = (
+    upstream_T_code * uc.c_to_vAi ** 2 / uc.mass_ratio
+    if upstream_T_code is not None else None
+)
 up_mask = (n_e > 0.8) & (n_e < 1.5)
 cs_mask = (n_e > 1.5) & np.isfinite(Te["xx"])
 
-print(f"  Upstream T_e (expect ~ {upstream_Te:.4f} m_i vAi²):")
+expect_str = f"  (expect ~ {upstream_Te:.4f})" if upstream_Te is not None else ""
+print(f"  Upstream T_e{expect_str}:")
 for c in ["xx", "yy", "zz"]:
     print(f"    T_e,{c} = {np.nanmedian(Te[c][up_mask]):.4f} m_i vAi²")
 print("  Current-sheet T_e (T_zz > T_xx,yy expected from Ez heating):")
@@ -331,7 +351,8 @@ for comp, key in [("xx", "TXX2"), ("yy", "TYY2"), ("zz", "TZZ2"),
                   ("xy", "TXY2"), ("xz", "TXZ2"), ("yz", "TYZ2")]:
     Ti[comp] = flds[key][0] / n_i_safe
 
-print(f"  Upstream T_i,xx = {np.nanmedian(Ti['xx'][up_mask]):.4f} m_i vAi²  (expect {upstream_Te:.4f})")
+expect_str = f"  (expect {upstream_Te:.4f})" if upstream_Te is not None else ""
+print(f"  Upstream T_i,xx = {np.nanmedian(Ti['xx'][up_mask]):.4f} m_i vAi²{expect_str}")
 
 fig, axes = plt.subplots(2, 3, figsize=(13, 7), tight_layout=True)
 for ax, (comp, arr) in zip(axes.flat, Ti.items()):
@@ -349,9 +370,13 @@ print("\nPlotting scalar temperature from moments ...")
 T_e = moms.temperature(1, units="ion")
 T_i = moms.temperature(2, units="ion")
 
-upstream_T_vAi = upstream_T_code * uc.c_to_vAi ** 2 / uc.mass_ratio
-print(f"  T_e median (populated): {np.median(T_e[T_e > 0]):.4f} m_i vAi²  (expect {upstream_T_vAi:.4f})")
-print(f"  T_i median (populated): {np.median(T_i[T_i > 0]):.4f} m_i vAi²  (expect {upstream_T_vAi:.4f})")
+upstream_T_vAi = (
+    upstream_T_code * uc.c_to_vAi ** 2 / uc.mass_ratio
+    if upstream_T_code is not None else None
+)
+expect_str = f"  (expect {upstream_T_vAi:.4f})" if upstream_T_vAi is not None else ""
+print(f"  T_e median (populated): {np.median(T_e[T_e > 0]):.4f} m_i vAi²{expect_str}")
+print(f"  T_i median (populated): {np.median(T_i[T_i > 0]):.4f} m_i vAi²{expect_str}")
 
 _row(["T_e (m_i vAi²)", "T_i (m_i vAi²)"], [T_e, T_i],
      cmap="inferno", symmetric=False, label="T (m_i vAi²)")
@@ -392,7 +417,7 @@ _savefig("T_tensor_moms")
 
 # ── 14–15. Temperature comparison: field vs moments (2D and 1D) ───────────────
 print("\nPlotting temperature comparison (field vs moments) ...")
-upstream_T = upstream_T_code * uc.c_to_vAi ** 2 / uc.mass_ratio
+upstream_T = upstream_T_vAi   # may be None if not in params
 
 species_info = [
     ("Electron", Te, {"xx": Te_xx, "yy": Te_yy, "zz": Te_zz}, Ve, n_e, 1),
@@ -432,7 +457,8 @@ for name, fld_T, moms_T_ij, Vf, n_fld, sid in species_info:
 
     # Upstream diagnostics
     up_mask2 = (n_fld > 0.8) & (n_fld < 1.5)
-    print(f"  {name} (m_k/m_i = {mk_over_mi:.3f})  upstream expect ~ {upstream_T:.4f} m_i vAi²:")
+    expect_str = f"  upstream expect ~ {upstream_T:.4f} m_i vAi²" if upstream_T is not None else ""
+    print(f"  {name} (m_k/m_i = {mk_over_mi:.3f}){expect_str}:")
     for comp in ["xx", "yy", "zz"]:
         fld_up  = np.nanmedian(fld_corr[comp][up_mask2])
         moms_up = np.nanmedian(moms_T_ij[comp][up_mask2 & (moms_T_ij[comp] > 0)])
@@ -446,7 +472,8 @@ for name, fld_T, moms_T_ij, Vf, n_fld, sid in species_info:
         moms_1d = np.nanmean(moms_T_ij[comp], axis=0)
         ax.plot(x, fld_1d,  lw=1.5, label="field file (CIC)")
         ax.plot(x, moms_1d, lw=1.5, label="moments (NGP)", alpha=0.8)
-        ax.axhline(upstream_T, color="k", lw=1, ls="--", label=f"upstream ({upstream_T:.3f})")
+        if upstream_T is not None:
+            ax.axhline(upstream_T, color="k", lw=1, ls="--", label=f"upstream ({upstream_T:.3f})")
         ax.set_xlabel("x (di)")
         ax.set_ylabel("T (m_i vAi²)")
         ax.set_title(f"T_{name[0].lower()},{comp}")
