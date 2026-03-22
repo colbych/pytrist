@@ -10,6 +10,13 @@ Electromagnetic:   ex, ey, ez, bx, by, bz, jx, jy, jz
 Per species:       dens_1, dens_2, enrg_1, enrg_2, ...
                    (species index suffix varies by run)
 
+Moment tensor datasets (when enabled in Tristan output config)
+--------------------------------------------------------------
+Momentum density:  T0X{k}, T0Y{k}, T0Z{k}     — first-order moment
+Diagonal stress:   TXX{k}, TYY{k}, TZZ{k}     — pressure tensor diagonal
+Off-diagonal:      TXY{k}, TXZ{k}, TYZ{k}     — shear stress
+Heat flux:         QX{k},  QY{k},  QZ{k}       — third-order moment
+
 All arrays are 3-D (nz, ny, nx) even for 2-D runs (nz==1).
 
 Usage example::
@@ -42,9 +49,10 @@ from .units import UnitConverter
 _EM_KEYS: frozenset[str] = frozenset({"bx", "by", "bz", "ex", "ey", "ez"})
 
 # Regex patterns for per-species moment fields (both dens1 and dens_1 style)
-_DENS_RE = re.compile(r"^dens_?(\d+)$")          # dens1, dens_1, dens2, …
-_VEL_RE = re.compile(r"^vel([xyz])_?(\d*)$")     # velx, velx1, velx_1, …
+_DENS_RE = re.compile(r"^dens_?(\d+)$")             # dens1, dens_1, dens2, …
+_VEL_RE = re.compile(r"^vel([xyz])_?(\d*)$")        # velx, velx1, velx_1, …
 _STRESS_RE = re.compile(r"^T([XYZ0]{2})_?(\d+)$")  # TXX1, TYY2, TXZ1, T0X1, …
+_HEAT_FLUX_RE = re.compile(r"^Q([XYZ])_?(\d+)$")   # QX1, QY2, QZ1, …
 
 
 class FieldSnapshot:
@@ -73,11 +81,16 @@ class FieldSnapshot:
             (where ``n0 = ppc0/2``) → dimensionless, upstream ≈ 1.
           - **Bulk velocity** (velx, vely, velz, velx1, …): multiplied by
             ``c_to_vAi = √(mass_ratio/σ)`` → units of vAi.
-          - **Stress tensor** (TXX1, TYY2, TXZ1, …): divided by ``n0 × mass_ratio``
-            then multiplied by ``c_to_vAi²`` → units of ``(n/n0) × (m_k/m_i) × vAi²``.
-            Dividing by density gives temperature ``T = (m_k/m_i) ⟨δv²⟩ c_to_vAi²``
-            in units of m_i vAi², equal for both species in an equal-temperature
-            plasma (e.g. T_e = T_i ≈ 0.1 m_i vAi² upstream if initialized equal).
+          - **Stress tensor** (TXX1, TYY2, TXZ1, T0X1, …): divided by
+            ``n0 × mass_ratio`` then multiplied by ``c_to_vAi²`` → units of
+            ``(n/n0) × (m_k/m_i) × vAi²``.  Dividing by density gives
+            temperature ``T = (m_k/m_i) ⟨δv²⟩ c_to_vAi²`` in units of
+            m_i vAi², equal for both species in an equal-temperature plasma
+            (e.g. T_e = T_i ≈ 0.1 m_i vAi² upstream if initialized equal).
+          - **Heat flux** (QX1, QY2, …): divided by ``n0 × mass_ratio`` then
+            multiplied by ``c_to_vAi³`` → units of ``(n/n0) × (m_k/m_i) × vAi³``.
+            This is consistent with the stress-tensor normalization with one
+            additional power of velocity.
           - All other fields (currents, energy density, etc.) are returned
             unchanged.
 
@@ -211,6 +224,13 @@ class FieldSnapshot:
         if m:
             n0 = self._n0 if self._n0 is not None else 1.0
             return arr / (n0 * self.uc.mass_ratio) * self.uc.c_to_vAi ** 2
+
+        # Heat flux Q{i}{k} → normalized by n0 × m_i × vAi³
+        # Q_k (code) ≈ m_k × n × ⟨v²⟩ × v_i, one extra velocity factor vs stress.
+        m = _HEAT_FLUX_RE.match(key)
+        if m:
+            n0 = self._n0 if self._n0 is not None else 1.0
+            return arr / (n0 * self.uc.mass_ratio) * self.uc.c_to_vAi ** 3
 
         return arr
 
@@ -394,6 +414,98 @@ class FieldSnapshot:
             vz = vz * self.uc.c_to_vAi
 
         return {"vx": vx, "vy": vy, "vz": vz}
+
+    def stress_tensor(self, species_id: int) -> dict[str, np.ndarray]:
+        """Stress tensor (and momentum density) for a species from the field file.
+
+        Returns all nine moment-tensor components that Tristan stores per species:
+        the three momentum-density components (T0X/Y/Z), the three diagonal
+        pressure-tensor components (TXX/YY/ZZ), and the three off-diagonal
+        shear-stress components (TXY/XZ/YZ).
+
+        Only components present in the file are included; missing components are
+        silently omitted (e.g. if the run was configured without ``write_Tij``).
+
+        Parameters
+        ----------
+        species_id : int
+            Species index (1 = electrons, 2 = ions, etc.).
+
+        Returns
+        -------
+        dict with a subset of keys: 't0x', 't0y', 't0z',
+            'txx', 'tyy', 'tzz', 'txy', 'txz', 'tyz'
+            Arrays are normalized when ``units='ion'``:
+            divided by ``n0 × mass_ratio`` and multiplied by ``c_to_vAi²``.
+
+        Raises
+        ------
+        KeyError
+            If none of the expected stress-tensor datasets are present.
+        """
+        components = {
+            "t0x": f"T0X{species_id}",
+            "t0y": f"T0Y{species_id}",
+            "t0z": f"T0Z{species_id}",
+            "txx": f"TXX{species_id}",
+            "tyy": f"TYY{species_id}",
+            "tzz": f"TZZ{species_id}",
+            "txy": f"TXY{species_id}",
+            "txz": f"TXZ{species_id}",
+            "tyz": f"TYZ{species_id}",
+        }
+        result = {}
+        for out_key, hdf_key in components.items():
+            if hdf_key in self.keys:
+                result[out_key] = self._load_field(hdf_key)
+        if not result:
+            raise KeyError(
+                f"No stress-tensor datasets found for species {species_id} "
+                f"in {self.filepath.name}.\n"
+                f"Expected keys like 'TXX{species_id}', 'T0X{species_id}', etc.\n"
+                f"Available fields: {self.keys}"
+            )
+        return result
+
+    def heat_flux(self, species_id: int) -> dict[str, np.ndarray]:
+        """Heat flux vector (third-order moment) for a species.
+
+        Reads the ``QX{k}``, ``QY{k}``, ``QZ{k}`` datasets written by Tristan
+        when ``write_Qi`` is enabled in the output configuration.
+
+        Parameters
+        ----------
+        species_id : int
+            Species index (1 = electrons, 2 = ions, etc.).
+
+        Returns
+        -------
+        dict with keys 'qx', 'qy', 'qz'
+            Arrays are normalized when ``units='ion'``:
+            divided by ``n0 × mass_ratio`` and multiplied by ``c_to_vAi³``.
+
+        Raises
+        ------
+        KeyError
+            If the heat-flux datasets are not present in the file.
+        """
+        components = {
+            "qx": f"QX{species_id}",
+            "qy": f"QY{species_id}",
+            "qz": f"QZ{species_id}",
+        }
+        result = {}
+        for out_key, hdf_key in components.items():
+            if hdf_key in self.keys:
+                result[out_key] = self._load_field(hdf_key)
+        if not result:
+            raise KeyError(
+                f"No heat-flux datasets found for species {species_id} "
+                f"in {self.filepath.name}.\n"
+                f"Expected keys like 'QX{species_id}', 'QY{species_id}', 'QZ{species_id}'.\n"
+                f"Available fields: {self.keys}"
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Bulk release / cache management
