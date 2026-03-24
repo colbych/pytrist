@@ -247,7 +247,21 @@ class EnergyFlux:
         units : {'code', 'ion'}
             ``'ion'`` normalises to ``[n0 mi vAi³]``.
         """
-        pass
+        cache_key = ("ke_flux_code", species_id)
+        if cache_key not in self._cache:
+            ke  = self.bulk_ke_density(species_id)
+            vel = self._bulk_velocity_raw(species_id)
+            self._cache[cache_key] = {
+                "x": ke * vel["vx"],
+                "y": ke * vel["vy"],
+                "z": ke * vel["vz"],
+            }
+        result = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            f = self._energy_flux_factor()
+            return {"x": result["x"] * f, "y": result["y"] * f, "z": result["z"] * f}
+        return result
 
     def internal_energy_flux(
         self, species_id: int, units: str = "code"
