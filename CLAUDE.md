@@ -32,10 +32,12 @@ pytrist/
 ├── simulation.py      — Simulation class (primary entry point)
 ├── fields.py          — FieldSnapshot, FieldLoader
 ├── particles.py       — ParticleSnapshot
+├── moments.py         — ParticleMoments
 ├── params.py          — SimParams
 ├── history.py         — History
 ├── spectra.py         — SpectraSnapshot
-└── units.py           — UnitConverter
+├── units.py           — UnitConverter
+└── energy.py          — EnergyFlux  [IN DEVELOPMENT — see §9]
 ```
 
 ---
@@ -197,6 +199,10 @@ Simulation
 │   └── uses: UnitConverter      — attached as .uc
 ├── returns: ParticleSnapshot    — via .particles(step)
 │   └── uses: UnitConverter      — attached as .uc
+├── returns: ParticleMoments     — via .moments(step)
+│   └── uses: UnitConverter      — attached as .uc
+├── returns: EnergyFlux          — via .energy_flux(step)  [IN DEVELOPMENT]
+│   └── uses: UnitConverter      — attached as .uc
 ├── returns: SpectraSnapshot     — via .spectra(step)
 ├── returns: History             — via .history()
 │   └── uses: UnitConverter      — for .time_ion
@@ -214,7 +220,8 @@ Simulation
 ### Caching strategy
 
 - `Simulation` caches `SimParams`, `FieldSnapshot`, `ParticleSnapshot`,
-  `SpectraSnapshot`, and `History` objects in dicts keyed by step number.
+  `SpectraSnapshot`, `ParticleMoments`, `EnergyFlux`, and `History` objects
+  in dicts keyed by step number.
 - Individual snapshots cache raw NumPy arrays in `self._cache` dicts.
 - `clear_cache()` methods allow releasing memory when processing many steps.
 
@@ -444,6 +451,97 @@ def test_field_snapshot_bx(tmp_flds_file):
 
 This pattern can be applied to `params.py`, `particles.py`, `spectra.py`,
 and `simulation.py` tests.
+
+---
+
+## 9. EnergyFlux Module — In Development
+
+### Overview
+
+`pytrist/energy.py` provides `EnergyFlux`, a class for computing all terms in the plasma
+energy density flux decomposition from the field-file moment tensors (TXX, QX, etc.).
+It is accessed via `sim.energy_flux(step)` and mirrors the `ParticleMoments` design.
+
+### Physics: energy flux decomposition
+
+For each particle species *s*, the total particle energy flux decomposes as:
+
+```
+Q_s = q_KE + q_enthalpy + q_heat
+```
+
+| Term | Formula (code units) | Ion units factor |
+|------|---------------------|-----------------|
+| Bulk KE density | `½ × dens_s × (vx²+vy²+vz²)` | `/ (n0 × mr) × c_to_vAi²` |
+| Bulk KE flux | `KE_density × U_i` | `/ (n0 × mr) × c_to_vAi³` |
+| Internal energy density | `½ × (TXX_s + TYY_s + TZZ_s)` | `/ (n0 × mr) × c_to_vAi²` |
+| Internal energy flux | `u_th_s × U_i` | `/ (n0 × mr) × c_to_vAi³` |
+| Enthalpy flux | `P_ij U_j` (full tensor·velocity) | `/ (n0 × mr) × c_to_vAi³` |
+| Heat flux | raw `QX_s, QY_s, QZ_s` | `/ (n0 × mr) × c_to_vAi³` |
+| Poynting flux | `CC × (E×B)` | `× c_to_vAi³ / (4π × n0 × mr × CC²)` |
+
+where `mr = mass_ratio`, `n0 = ppc0/2`.  Poynting ion-unit normalisation uses the
+Gaussian Alfvén relation `B0² = 4π n0 mi vAi²`.
+
+`dens_s` stores mass density `m_s n_s`.  The diagonal stress tensor `TXX_s` stores
+`m_s n_s ⟨v_x²⟩`.  All particle energy flux terms share dimension `[m_s n_s c³]`
+in code units.
+
+### Public API
+
+```python
+ef = sim.energy_flux(step=10)
+
+# Scalar energy densities — shape (nz, ny, nx)
+ef.bulk_ke_density(species_id, units='code')
+ef.internal_energy_density(species_id, units='code')
+
+# Vector energy fluxes — dict{'x','y','z'}, shape (nz, ny, nx) each
+ef.bulk_ke_flux(species_id, units='code')
+ef.internal_energy_flux(species_id, units='code')
+ef.enthalpy_flux(species_id, units='code')
+ef.heat_flux(species_id, units='code')
+ef.poynting_flux(units='code')
+
+# Aggregates
+ef.total_particle_energy_flux(species_id, units='code')  # KE + enthalpy + heat
+ef.total_energy_flux(species_ids=[1,2], units='code')    # Poynting + all species
+
+ef.clear_cache()
+```
+
+### Implementation status
+
+| Method | Status | Notes |
+|--------|--------|-------|
+| `bulk_ke_density` | **Done** | Verified on test data |
+| `internal_energy_density` | Stub (`pass`) | Next to implement |
+| `bulk_ke_flux` | Stub (`pass`) | |
+| `internal_energy_flux` | Stub (`pass`) | |
+| `enthalpy_flux` | Stub (`pass`) | |
+| `heat_flux` | Stub (`pass`) | |
+| `poynting_flux` | Stub (`pass`) | |
+| `total_particle_energy_flux` | Stub (`pass`) | Depends on above |
+| `total_energy_flux` | Stub (`pass`) | Depends on above |
+
+### Design conventions
+
+- All intermediate results cached in **code units** under tuple keys, e.g.
+  `("ke_density_code", species_id)`.  Ion conversion applied at return time only.
+- Methods that require missing datasets (`TXX`, `QX`, etc.) raise `KeyError` with
+  an informative message listing available fields.
+- Missing off-diagonal stress components (`TXY`, `TXZ`, `TYZ`) are substituted with
+  zero and a `RuntimeWarning` is emitted.
+- Requires a `params` file attached to the `FieldSnapshot` so that `_species_mass`,
+  `_species_charge`, and `_n0` are populated.
+
+### Test dataset
+
+```
+/Users/colby/Research/Programing/PIC/tristan-mp-v2/test_output_thrid/
+```
+Homogeneous two-beam test run: `sigma=4, mass_ratio=1, ppc0=100`, steps 0–2.
+Step 0 captures the injected distribution before magnetic rotation alters it.
 
 ---
 
