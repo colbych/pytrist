@@ -30,6 +30,7 @@ Classes can also be imported directly::
 """
 
 from .simulation import Simulation
+from .energy import EnergyFlux
 from .fields import FieldSnapshot, FieldLoader
 from .particles import ParticleSnapshot
 from .moments import ParticleMoments
@@ -43,6 +44,7 @@ __author__ = "pytrist contributors"
 
 __all__ = [
     "Simulation",
+    "EnergyFlux",
     "FieldSnapshot",
     "FieldLoader",
     "ParticleSnapshot",
