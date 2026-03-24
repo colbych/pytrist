@@ -200,7 +200,18 @@ class EnergyFlux:
         units : {'code', 'ion'}
             ``'ion'`` normalises to ``[n0 mi vAi²]``.
         """
-        pass
+        cache_key = ("ke_density_code", species_id)
+        if cache_key not in self._cache:
+            dens = self._flds._load(f"dens{species_id}")
+            vel = self._bulk_velocity_raw(species_id)
+            self._cache[cache_key] = 0.5 * dens * (
+                vel["vx"] ** 2 + vel["vy"] ** 2 + vel["vz"] ** 2
+            )
+        arr = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            return arr * self._energy_density_factor()
+        return arr
 
     def internal_energy_density(self, species_id: int, units: str = "code") -> np.ndarray:
         """Thermal energy density: ½ Tr(P_s) = ½ (TXX + TYY + TZZ).
