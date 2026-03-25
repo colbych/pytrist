@@ -515,9 +515,9 @@ ef.clear_cache()
 | Method | Status | Notes |
 |--------|--------|-------|
 | `bulk_ke_density` | **Done** | Verified on test data |
-| `internal_energy_density` | Stub (`pass`) | Next to implement |
-| `bulk_ke_flux` | Stub (`pass`) | |
-| `internal_energy_flux` | Stub (`pass`) | |
+| `internal_energy_density` | **Done** | Uses `_pressure_tensor_raw()` |
+| `bulk_ke_flux` | **Done** | Verified on test data |
+| `internal_energy_flux` | **Done** | Verified on test data |
 | `enthalpy_flux` | Stub (`pass`) | |
 | `heat_flux` | Stub (`pass`) | |
 | `poynting_flux` | Stub (`pass`) | |
