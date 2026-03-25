@@ -183,6 +183,33 @@ class EnergyFlux:
         self._cache[key] = result
         return result
 
+    def _pressure_tensor_raw(self, species_id: int) -> dict[str, np.ndarray]:
+        """Pressure tensor P_ij = Π_ij − ρ_s U_i U_j in code units, cached.
+
+        Subtracts the bulk-flow contribution from the full stress-energy
+        tensor (TXX, TYY, … as stored by Tristan) to give the true thermal
+        pressure tensor in the bulk frame.  Off-diagonal components that are
+        absent from the file are substituted with zero (via ``_stress_raw``).
+        """
+        key = ("pressure_raw", species_id)
+        if key in self._cache:
+            return self._cache[key]  # type: ignore[return-value]
+
+        stress = self._stress_raw(species_id)
+        dens   = self._flds._load(f"dens{species_id}")
+        vel    = self._bulk_velocity_raw(species_id)
+        vx, vy, vz = vel["vx"], vel["vy"], vel["vz"]
+
+        self._cache[key] = {
+            "xx": stress["xx"] - dens * vx * vx,
+            "yy": stress["yy"] - dens * vy * vy,
+            "zz": stress["zz"] - dens * vz * vz,
+            "xy": stress["xy"] - dens * vx * vy,
+            "xz": stress["xz"] - dens * vx * vz,
+            "yz": stress["yz"] - dens * vy * vz,
+        }
+        return self._cache[key]  # type: ignore[return-value]
+
     # ------------------------------------------------------------------
     # Scalar energy densities
     # ------------------------------------------------------------------
@@ -226,7 +253,15 @@ class EnergyFlux:
         units : {'code', 'ion'}
             ``'ion'`` normalises to ``[n0 mi vAi²]``.
         """
-        pass
+        cache_key = ("u_th_code", species_id)
+        if cache_key not in self._cache:
+            P = self._pressure_tensor_raw(species_id)
+            self._cache[cache_key] = 0.5 * (P["xx"] + P["yy"] + P["zz"])
+        arr = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            return arr * self._energy_density_factor()
+        return arr
 
     # ------------------------------------------------------------------
     # Vector energy fluxes  (return {'x', 'y', 'z'})
