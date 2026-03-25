@@ -477,7 +477,7 @@ Q_s = q_KE + q_enthalpy + q_heat
 | Internal energy density | `½ × (TXX_s + TYY_s + TZZ_s)` | `/ (n0 × mr) × c_to_vAi²` |
 | Internal energy flux | `u_th_s × U_i` | `/ (n0 × mr) × c_to_vAi³` |
 | Enthalpy flux | `P_ij U_j` (full tensor·velocity) | `/ (n0 × mr) × c_to_vAi³` |
-| Heat flux | raw `QX_s, QY_s, QZ_s` | `/ (n0 × mr) × c_to_vAi³` |
+| Heat flux | `½ QX_s − q_KE − q_enth − q_IE` | `/ (n0 × mr) × c_to_vAi³` |
 | Poynting flux | `CC × (E×B)` | `× c_to_vAi³ / (4π × n0 × mr × CC²)` |
 
 where `mr = mass_ratio`, `n0 = ppc0/2`.  Poynting ion-unit normalisation uses the
@@ -519,7 +519,7 @@ ef.clear_cache()
 | `bulk_ke_flux` | **Done** | Verified on test data |
 | `internal_energy_flux` | **Done** | Verified on test data |
 | `enthalpy_flux` | **Done** | Verified on test data |
-| `heat_flux` | Stub (`pass`) | |
+| `heat_flux` | **Done** | QX/QY/QZ are raw 3rd moments; subtracts bulk contributions |
 | `poynting_flux` | Stub (`pass`) | |
 | `total_particle_energy_flux` | Stub (`pass`) | Depends on above |
 | `total_energy_flux` | Stub (`pass`) | Depends on above |
@@ -532,16 +532,24 @@ ef.clear_cache()
   an informative message listing available fields.
 - Missing off-diagonal stress components (`TXY`, `TXZ`, `TYZ`) are substituted with
   zero and a `RuntimeWarning` is emitted.
+- **`TXX_s` stores the raw lab-frame second moment** `Π_ij = ρ_s <v_i v_j>`, NOT the
+  pressure tensor.  `_pressure_tensor_raw()` subtracts `ρ_s U_i U_j` to recover `P_ij`.
+- **`QX_s` stores the raw lab-frame third moment** `ρ_s <|v|² v_i>`, NOT the heat-flux
+  cumulant and WITHOUT a factor of ½.  `heat_flux()` applies the identity
+  `q_i = ½ Q_raw_i − q_KE_i − q_enthalpy_i − q_IE_i` to recover the true cumulant.
 - Requires a `params` file attached to the `FieldSnapshot` so that `_species_mass`,
   `_species_charge`, and `_n0` are populated.
 
 ### Test dataset
 
 ```
-/Users/colby/Research/Programing/PIC/tristan-mp-v2/test_output_thrid/
+/Users/colby/Research/Programing/PIC/tristan-mp-v2/test_output_energyflux/
 ```
-Homogeneous two-beam test run: `sigma=4, mass_ratio=1, ppc0=100`, steps 0–2.
-Step 0 captures the injected distribution before magnetic rotation alters it.
+Homogeneous two-beam test run: `sigma=0.0016, mass_ratio=100, ppc0=100`, steps 0–2.
+Injection (from `user_test_thrid_moment.F90`, `shift_gamma=1.0002`, `v_=0.02c`):
+- Beam A (3/4 of particles): `vx=0.01c, vy=0`
+- Beam B (1/4 of particles): `vx=0.01c, vy=+0.08c`
+Bulk: `Ux=0.01c, Uy=0.02c`.  No particle output (`prtl_enable=0`).
 
 ---
 

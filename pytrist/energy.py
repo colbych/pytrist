@@ -390,7 +390,29 @@ class EnergyFlux:
         units : {'code', 'ion'}
             ``'ion'`` normalises to ``[n0 mi vAi³]``.
         """
-        pass
+        cache_key = ("heat_flux_code", species_id)
+        if cache_key not in self._cache:
+            # QX/QY/QZ store the raw third moment ρ_s <|v|² v_i> — no ½ factor
+            # and no bulk-flow subtraction (analogous to TXX storing the full
+            # second moment rather than the pressure tensor).
+            # Extract the true heat-flux cumulant via the identity:
+            #   ρ <|v|² v_i> = 2 q_KE_i + 2 q_enthalpy_i + 2 q_IE_i + 2 q_heat_i
+            # => q_heat_i = ½ Q_raw_i − q_KE_i − q_enthalpy_i − q_IE_i
+            raw  = self._heat_flux_raw(species_id)
+            ke   = self.bulk_ke_flux(species_id)
+            enth = self.enthalpy_flux(species_id)
+            ie   = self.internal_energy_flux(species_id)
+            self._cache[cache_key] = {
+                "x": 0.5 * raw["x"] - ke["x"] - enth["x"] - ie["x"],
+                "y": 0.5 * raw["y"] - ke["y"] - enth["y"] - ie["y"],
+                "z": 0.5 * raw["z"] - ke["z"] - enth["z"] - ie["z"],
+            }
+        result = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            f = self._energy_flux_factor()
+            return {"x": result["x"] * f, "y": result["y"] * f, "z": result["z"] * f}
+        return result
 
     def poynting_flux(self, units: str = "code") -> dict[str, np.ndarray]:
         """Electromagnetic energy flux: S = (CC/4π) E × B.
