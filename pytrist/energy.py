@@ -356,7 +356,22 @@ class EnergyFlux:
         units : {'code', 'ion'}
             ``'ion'`` normalises to ``[n0 mi vAi³]``.
         """
-        pass
+        cache_key = ("enthalpy_flux_code", species_id)
+        if cache_key not in self._cache:
+            P   = self._pressure_tensor_raw(species_id)
+            vel = self._bulk_velocity_raw(species_id)
+            vx, vy, vz = vel["vx"], vel["vy"], vel["vz"]
+            self._cache[cache_key] = {
+                "x": P["xx"] * vx + P["xy"] * vy + P["xz"] * vz,
+                "y": P["xy"] * vx + P["yy"] * vy + P["yz"] * vz,
+                "z": P["xz"] * vx + P["yz"] * vy + P["zz"] * vz,
+            }
+        result = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            f = self._energy_flux_factor()
+            return {"x": result["x"] * f, "y": result["y"] * f, "z": result["z"] * f}
+        return result
 
     def heat_flux(
         self, species_id: int, units: str = "code"

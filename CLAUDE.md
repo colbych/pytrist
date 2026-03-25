@@ -518,7 +518,7 @@ ef.clear_cache()
 | `internal_energy_density` | **Done** | Uses `_pressure_tensor_raw()` |
 | `bulk_ke_flux` | **Done** | Verified on test data |
 | `internal_energy_flux` | **Done** | Verified on test data |
-| `enthalpy_flux` | Stub (`pass`) | |
+| `enthalpy_flux` | **Done** | Verified on test data |
 | `heat_flux` | Stub (`pass`) | |
 | `poynting_flux` | Stub (`pass`) | |
 | `total_particle_energy_flux` | Stub (`pass`) | Depends on above |
