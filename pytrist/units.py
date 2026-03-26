@@ -27,11 +27,12 @@ The conversion *factors* (multiply a code-unit quantity to get ion units):
       wpe_to_wci  = √σ / mass_ratio
       c_to_vAi    = √(mass_ratio / σ)   [so v[vAi] = v[c] / (vAi/c)]
 
-For electromagnetic fields normalised to B0:
-  - B already expressed in units of B0; converting B → vAi units gives
-    the same numerical value (B0 ≡ 1 in ion units).
-  - E is normalised the same way as B × c; to convert E → vAi units
-    use the same factor as B.
+For electromagnetic fields:
+  - B fields are normalised to B0; the upstream guide field equals 1 in ion units.
+  - E fields are normalised to E0 = B0 × vAi_over_c, the natural ion electric
+    field unit set by ideal MHD (E ~ v/c × B ~ vAi/c × B0).
+    With this choice, (E×B)/B0² = S_ion directly, since
+    (E/E0) × (B/B0) = (E×B) / (E0 × B0) = (E×B) / (B0² × vAi_over_c).
 """
 
 from __future__ import annotations
@@ -160,6 +161,20 @@ class UnitConverter:
         return self._CC ** 2 * np.sqrt(self._sigma) / self._c_omp
 
     @property
+    def E0(self) -> float:
+        """Natural ion electric field unit in Tristan code units.
+
+        In ideal MHD the electric field scales as E ~ (v/c) × B ~ (vAi/c) × B0,
+        so the natural ion unit is::
+
+            E0 = B0 × vAi_over_c = B0 × √(σ / mass_ratio)
+
+        With this normalisation, ``(field_E × field_B) = S_ion`` for the
+        ExB Poynting flux without any additional factor.
+        """
+        return self.B0 * self.vAi_over_c
+
+    @property
     def step_to_wci(self) -> float:
         """Factor: code step → 1/Ωci_y.
 
@@ -252,10 +267,15 @@ class UnitConverter:
         return np.asarray(arr, dtype=float) / self.B0
 
     def field_E(self, arr):
-        """Normalise an electric field array to B0.
+        """Normalise an electric field array to E0 = B0 × vAi_over_c.
 
-        E fields in Tristan-V2 are stored in the same code units as B
-        (both ~ B0 upstream), so the same B0 factor applies.
+        The natural ion electric field unit is set by ideal MHD:
+        E ~ (v/c) × B ~ (vAi/c) × B0.  With this normalisation an ExB
+        equilibrium at drift velocity v_ExB gives field_E × field_B = v_ExB/vAi
+        directly, and the Poynting flux in ion units is simply field_E × field_B.
+
+        For the standard test case (vx = 0.01c, By = B0):
+            Ez_eq = -0.01 × B0  →  field_E(Ez_eq) = -0.01/vAi_over_c = -2.5
 
         Parameters
         ----------
@@ -265,9 +285,9 @@ class UnitConverter:
         Returns
         -------
         numpy.ndarray
-            Electric field normalised to B0.
+            Electric field normalised to E0 = B0 × vAi_over_c.
         """
-        return np.asarray(arr, dtype=float) / self.B0
+        return np.asarray(arr, dtype=float) / self.E0
 
     # ------------------------------------------------------------------
     # Representation
@@ -302,6 +322,7 @@ class UnitConverter:
             f"  cell_to_di             = {self.cell_to_di:.6g}",
             f"  wpe_to_wci             = {self.wpe_to_wci:.6g}",
             f"  c_to_vAi               = {self.c_to_vAi:.6g}",
-            f"  field_B/E: ÷ B0        = {self.B0:.6g}",
+            f"  field_B:   ÷ B0        = {self.B0:.6g}",
+            f"  field_E:   ÷ E0        = {self.E0:.6g}",
         ]
         return "\n".join(lines)

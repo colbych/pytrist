@@ -498,8 +498,8 @@ class Simulation:
         units : {'code', 'ion'}
             ``'code'`` returns raw code-unit values.
             ``'ion'`` converts the array:
-              - B-field components → :meth:`UnitConverter.field_B`
-              - E-field components → :meth:`UnitConverter.field_E`
+              - B-field components → :meth:`UnitConverter.field_B` (÷ B0)
+              - E-field components → :meth:`UnitConverter.field_E` (÷ E0 = B0×vAi_over_c)
               - Density/other      → returned as-is (no conversion defined)
 
         Returns

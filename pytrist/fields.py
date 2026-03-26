@@ -45,8 +45,9 @@ import numpy as np
 
 from .units import UnitConverter
 
-# Fields that are normalised by B0 when units='ion'
-_EM_KEYS: frozenset[str] = frozenset({"bx", "by", "bz", "ex", "ey", "ez"})
+# Fields normalised to B0 or E0 when units='ion'
+_B_KEYS: frozenset[str] = frozenset({"bx", "by", "bz"})
+_E_KEYS: frozenset[str] = frozenset({"ex", "ey", "ez"})
 
 # Regex patterns for per-species moment fields (both dens1 and dens_1 style)
 _DENS_RE = re.compile(r"^dens_?(\d+)$")             # dens1, dens_1, dens2, …
@@ -76,7 +77,9 @@ class FieldSnapshot:
           have magnitude ~B0 ≈ CC√σ/c_omp upstream.
         * ``'ion'`` — applies physical normalisation automatically:
 
-          - **B / E fields** (bx/by/bz/ex/ey/ez): divided by B0 → upstream By ≈ 1.
+          - **B fields** (bx/by/bz): divided by B0 → upstream By ≈ 1.
+          - **E fields** (ex/ey/ez): divided by E0 = B0 × vAi_over_c → equilibrium
+            ExB field Ez = −v_ExB/c × By gives field_E(Ez) = −v_ExB/vAi.
           - **Number density** (dens1, dens_1, …): divided by ``m_k × n0``
             (where ``n0 = ppc0/2``) → dimensionless, upstream ≈ 1.
           - **Bulk velocity** (velx, vely, velz, velx1, …): multiplied by
@@ -198,9 +201,13 @@ class FieldSnapshot:
         if self.units != "ion":
             return arr
 
-        # EM fields → divide by B0 (upstream By ≈ 1)
-        if key in _EM_KEYS:
+        # B fields → divide by B0 (upstream By ≈ 1)
+        if key in _B_KEYS:
             return self.uc.field_B(arr)
+
+        # E fields → divide by E0 = B0 × vAi_over_c
+        if key in _E_KEYS:
+            return self.uc.field_E(arr)
 
         # Number density dens{k} or dens_{k} → divide by m_k × n0
         m = _DENS_RE.match(key)
@@ -291,17 +298,17 @@ class FieldSnapshot:
 
     @property
     def ex(self) -> np.ndarray:
-        """Electric field x-component (normalised to B0 when units='ion')."""
+        """Electric field x-component (normalised to E0 = B0×vAi_over_c when units='ion')."""
         return self._load_field("ex")
 
     @property
     def ey(self) -> np.ndarray:
-        """Electric field y-component (normalised to B0 when units='ion')."""
+        """Electric field y-component (normalised to E0 = B0×vAi_over_c when units='ion')."""
         return self._load_field("ey")
 
     @property
     def ez(self) -> np.ndarray:
-        """Electric field z-component (normalised to B0 when units='ion')."""
+        """Electric field z-component (normalised to E0 = B0×vAi_over_c when units='ion')."""
         return self._load_field("ez")
 
     @property

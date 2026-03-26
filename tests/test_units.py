@@ -253,10 +253,10 @@ class TestFieldConversion:
         expected = np.array([0.0, 1.0, 2.0, -1.0])
         np.testing.assert_allclose(uc_standard.field_B(arr), expected, rtol=1e-12)
 
-    def test_field_E_normalises_by_B0(self, uc_standard):
-        """field_E uses the same B0 normalisation as field_B."""
-        B0 = uc_standard.B0
-        arr = np.array([0.0, B0, -B0])
+    def test_field_E_normalises_by_E0(self, uc_standard):
+        """field_E divides by E0 = B0 × vAi_over_c (natural ion E unit)."""
+        E0 = uc_standard.B0 * uc_standard.vAi_over_c
+        arr = np.array([0.0, E0, -E0])
         expected = np.array([0.0, 1.0, -1.0])
         np.testing.assert_allclose(uc_standard.field_E(arr), expected, rtol=1e-12)
 
