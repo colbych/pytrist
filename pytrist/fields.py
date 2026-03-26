@@ -326,6 +326,94 @@ class FieldSnapshot:
         """Magnetic field z-component (normalised to B0 when units='ion')."""
         return self._load_field("bz")
 
+    # ------------------------------------------------------------------
+    # Derived electromagnetic quantities
+    # ------------------------------------------------------------------
+
+    def B_squared(self) -> np.ndarray:
+        """Scalar magnetic energy density |B|².
+
+        In ion units returns ``(B/B0)²``, so the upstream guide field gives 1.
+        """
+        return self.bx**2 + self.by**2 + self.bz**2
+
+    def E_dot_B(self) -> np.ndarray:
+        """Scalar E·B.
+
+        In ion units: ``(E/E0)·(B/B0)``.  Zero for a pure ExB configuration.
+        """
+        return self.ex*self.bx + self.ey*self.by + self.ez*self.bz
+
+    def ExB_drift(self) -> dict[str, np.ndarray]:
+        """ExB drift velocity (E×B)/B², dict with keys 'x', 'y', 'z'.
+
+        In ion units the result has units of E0/B0 = vAi/c, so an
+        equilibrium drift at 0.01c gives 0.01/vAi_over_c (e.g. 2.5 for
+        vAi = 0.004c).  Returns zero where B = 0.
+        """
+        b2 = self.B_squared()
+        safe_b2 = np.where(b2 > 0, b2, np.inf)
+        return {
+            "x": (self.ey*self.bz - self.ez*self.by) / safe_b2,
+            "y": (self.ez*self.bx - self.ex*self.bz) / safe_b2,
+            "z": (self.ex*self.by - self.ey*self.bx) / safe_b2,
+        }
+
+    def B_hat(self) -> dict[str, np.ndarray]:
+        """Magnetic field unit vector B/|B|, dict with keys 'x', 'y', 'z'.
+
+        Dimensionless — identical in code and ion units since the B0
+        normalisation cancels.  Returns zero where B = 0.
+        """
+        b_mag = np.sqrt(self.B_squared())
+        safe_b = np.where(b_mag > 0, b_mag, np.inf)
+        return {
+            "x": self.bx / safe_b,
+            "y": self.by / safe_b,
+            "z": self.bz / safe_b,
+        }
+
+    def psi(self) -> np.ndarray:
+        """Magnetic flux function ψ = A_z computed in the x-y plane.
+
+        Uses a two-step integration with reference point ψ(0, 0) = 0:
+
+        1. Integrate −By along x at y = 0:
+               ψ(x, 0) = −∫₀ˣ By(x', 0) dx'
+        2. Integrate Bx along y at each x:
+               ψ(x, y) = ψ(x, 0) + ∫₀ʸ Bx(x, y') dy'
+
+        For 3D arrays the integration is performed in the x-y plane
+        (the last two axes of the field array).
+
+        In code units ψ has dimensions ``[B_code × cell]``.
+        In ion units ψ has dimensions ``[di]`` (since B → B/B0 and
+        dx → cell_to_di).
+
+        Assumes square cells (dx = dy), which Tristan-MP V2 always uses.
+        """
+        if self.units == "ion":
+            if self.uc is None:
+                raise ValueError(
+                    "unit_converter is required for psi() in ion units."
+                )
+            dx = self.uc.cell_to_di
+        else:
+            dx = 1.0
+
+        # Step 1: ψ(x, 0) — shifted cumsum of −By along x at y = 0
+        by_y0 = self.by[..., 0:1, :]                                   # (..., 1, nx)
+        by_y0_s = np.concatenate(
+            [np.zeros_like(by_y0[..., :1]), by_y0[..., :-1]], axis=-1
+        )
+        psi_y0 = -np.cumsum(by_y0_s, axis=-1) * dx                     # (..., 1, nx)
+
+        # Step 2: add ∫₀ʸ Bx dy — shifted cumsum of Bx along y
+        bx_s = np.concatenate(
+            [np.zeros_like(self.bx[..., :1, :]), self.bx[..., :-1, :]], axis=-2
+        )
+        return psi_y0 + np.cumsum(bx_s, axis=-2) * dx
+
     @property
     def jx(self) -> np.ndarray:
         """Current density x-component (code units)."""
