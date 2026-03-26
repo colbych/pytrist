@@ -417,27 +417,54 @@ class EnergyFlux:
     def poynting_flux(self, units: str = "code") -> dict[str, np.ndarray]:
         """Electromagnetic energy flux: S = (CC/4π) E × B.
 
-        In code units, returns ``CC × (E × B)`` (raw cross product scaled by
-        the code speed of light).
+        In code units, returns ``CC × (E × B)`` (the Gaussian Poynting vector
+        with the explicit speed-of-light factor).
 
-        In ion units, normalises to ``[n0 mi vAi³]`` using the Gaussian Alfvén
-        relation ``B0² = 4π n0 mi vAi²``::
+        In ion units, normalises to ``[n_phys mi vAi³]`` using the Gaussian
+        Alfvén relation ``B0² = 4π n_phys mi vAi²`` (where ``n_phys`` is the
+        physical background density, not ``ppc0/2``).  The 4π factors cancel
+        exactly, giving::
 
-            S_ion = CC × (E×B) / (4π × n0 × mass_ratio × vAi_code²)
+            S_ion = (E×B) / (B0² × vAi_over_c)
+                  = CC × (E×B) / (CC × B0 × E0)
 
-        where ``vAi_code = CC × vAi_over_c``.
+        where ``E0 = B0 × vAi_over_c`` is the natural ion electric field unit.
+        With this normalisation an ExB drift at velocity v gives S_ion = v/vAi.
 
-        .. note::
-            If Tristan-V2 absorbs the ``4π`` factor into field normalisation
-            the ion-unit result should be divided by ``4π`` again.  Verify
-            that the upstream Poynting flux matches physical expectations.
+        Unlike particle energy fluxes this does **not** require ``n0 = ppc0/2``;
+        only a ``UnitConverter`` is needed.
 
         Parameters
         ----------
         units : {'code', 'ion'}
-            ``'ion'`` normalises to ``[n0 mi vAi³]``.
+            ``'ion'`` normalises to ``[n_phys mi vAi³]``.
         """
-        pass
+        cache_key = ("poynting_flux_code",)
+        if cache_key not in self._cache:
+            if self.uc is None:
+                raise ValueError(
+                    "unit_converter is required to compute poynting_flux. "
+                    "Provide one when constructing EnergyFlux."
+                )
+            ex = self._flds._load("ex")
+            ey = self._flds._load("ey")
+            ez = self._flds._load("ez")
+            bx = self._flds._load("bx")
+            by = self._flds._load("by")
+            bz = self._flds._load("bz")
+            CC = self.uc.CC
+            self._cache[cache_key] = {
+                "x": CC * (ey * bz - ez * by),
+                "y": CC * (ez * bx - ex * bz),
+                "z": CC * (ex * by - ey * bx),
+            }
+        result = self._cache[cache_key]
+        if units == "ion":
+            if self.uc is None:
+                raise ValueError("unit_converter is required for units='ion'.")
+            f = 1.0 / (self.uc.CC * self.uc.B0 * self.uc.E0)
+            return {"x": result["x"] * f, "y": result["y"] * f, "z": result["z"] * f}
+        return result
 
     # ------------------------------------------------------------------
     # Aggregates
