@@ -475,13 +475,35 @@ class EnergyFlux:
     ) -> dict[str, np.ndarray]:
         """Total particle energy flux: q_KE + q_enthalpy + q_heat.
 
+        Sum of all three transport contributions for species *s*::
+
+            Q_s = bulk_ke_flux + enthalpy_flux + heat_flux
+
+        In code units: ``[m_k n_k c³]``.
+
         Parameters
         ----------
         species_id : int
             Species index (1-based).
         units : {'code', 'ion'}
+            ``'ion'`` normalises to ``[n0 mi vAi³]``.
         """
-        pass
+        cache_key = ("total_prtl_flux_code", species_id)
+        if cache_key not in self._cache:
+            ke   = self.bulk_ke_flux(species_id)
+            enth = self.enthalpy_flux(species_id)
+            heat = self.heat_flux(species_id)
+            self._cache[cache_key] = {
+                "x": ke["x"] + enth["x"] + heat["x"],
+                "y": ke["y"] + enth["y"] + heat["y"],
+                "z": ke["z"] + enth["z"] + heat["z"],
+            }
+        result = self._cache[cache_key]
+        if units == "ion":
+            self._check_ion_ready()
+            f = self._energy_flux_factor()
+            return {"x": result["x"] * f, "y": result["y"] * f, "z": result["z"] * f}
+        return result
 
     def total_energy_flux(
         self,
@@ -495,8 +517,17 @@ class EnergyFlux:
         species_ids : list of int, optional
             Species to include.  Defaults to ``[1, 2]``.
         units : {'code', 'ion'}
+            ``'ion'`` normalises particle fluxes to ``[n0 mi vAi³]`` and
+            Poynting to ``[n_phys mi vAi³]``.
         """
-        pass
+        if species_ids is None:
+            species_ids = [1, 2]
+        result = {ax: arr.copy() for ax, arr in self.poynting_flux(units=units).items()}
+        for sid in species_ids:
+            p = self.total_particle_energy_flux(sid, units=units)
+            for ax in ("x", "y", "z"):
+                result[ax] = result[ax] + p[ax]
+        return result
 
     # ------------------------------------------------------------------
     # Cache management
