@@ -43,6 +43,7 @@ from typing import Any
 import numpy as np
 
 from .energy import EnergyFlux
+from .field_moments import FieldMoments
 from .fields import FieldSnapshot
 from .history import History
 from .moments import ParticleMoments
@@ -153,6 +154,7 @@ class Simulation:
         self._particles_cache: dict[int, ParticleSnapshot] = {}
         self._spectra_cache: dict[int, SpectraSnapshot] = {}
         self._moments_cache: dict[int, ParticleMoments] = {}
+        self._field_moments_cache: dict[int, FieldMoments] = {}
         self._energy_cache: dict[int, EnergyFlux] = {}
         self._history_cache: History | None = None
         self._unit_converter_cache: UnitConverter | None = None
@@ -457,11 +459,36 @@ class Simulation:
             self._moments_cache[cache_key] = obj
         return obj
 
+    def field_moments(self, step: int) -> FieldMoments:
+        """Return a :class:`~pytrist.field_moments.FieldMoments` for *step*.
+
+        Provides derived quantities from field-file moment tensors: bulk
+        velocity, charge density, pressure tensor, temperature tensor.
+
+        The result is cached; call ``fm.clear_cache()`` to release
+        intermediate arrays without evicting the object from the cache.
+
+        Parameters
+        ----------
+        step : int
+            Step number.
+        """
+        if step not in self._field_moments_cache:
+            flds = self.fields(step, units="code")
+            try:
+                uc = self.unit_converter
+            except FileNotFoundError:
+                uc = None
+            self._field_moments_cache[step] = FieldMoments(flds, unit_converter=uc)
+        return self._field_moments_cache[step]
+
     def energy_flux(self, step: int) -> EnergyFlux:
         """Return an :class:`~pytrist.energy.EnergyFlux` for *step*.
 
         The result is cached; call ``ef.clear_cache()`` to release intermediate
-        arrays without evicting the object from the cache.
+        arrays without evicting the object from the cache.  The ``EnergyFlux``
+        shares the same :class:`~pytrist.field_moments.FieldMoments` instance
+        as ``field_moments(step)`` to avoid duplicate caching.
 
         Parameters
         ----------
@@ -469,12 +496,10 @@ class Simulation:
             Step number.
         """
         if step not in self._energy_cache:
-            flds = self.fields(step, units="code")
-            try:
-                uc = self.unit_converter
-            except FileNotFoundError:
-                uc = None
-            self._energy_cache[step] = EnergyFlux(flds, unit_converter=uc)
+            fm = self.field_moments(step)
+            ef = EnergyFlux(fm._flds, unit_converter=fm.uc, n0=fm._n0)
+            ef._fm = fm   # share the cached FieldMoments
+            self._energy_cache[step] = ef
         return self._energy_cache[step]
 
     # ------------------------------------------------------------------
