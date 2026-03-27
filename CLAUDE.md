@@ -630,7 +630,45 @@ Equilibrium: ExB drift ≈ 0.01c ≈ 2.5 vAi (in ion units).
 
 ---
 
-## 8. Known Limitations and Future Work
+## 8. Documentation
+
+### Building the docs locally
+
+```bash
+pip install -e ".[docs]"
+sphinx-build -b html docs docs/_build/html -W --keep-going
+open docs/_build/html/index.html   # macOS
+```
+
+The `-W` flag treats RST warnings as errors (the same as CI).  `docs/_build/` is
+gitignored; never commit it.
+
+### Adding a new class to the API reference
+
+1. Write the class with NumPy-style docstrings (``Parameters``, ``Returns``, etc.).
+2. Add an ``autoclass::`` entry to ``docs/api.rst`` in the appropriate section:
+
+   .. code-block:: rst
+
+       .. autoclass:: pytrist.MyNewClass
+          :members:
+          :member-order: bysource
+
+3. Watch for ``|X|`` notation in docstrings — RST interprets ``|word|`` as a
+   substitution reference.  Escape pipes with a backslash: ``\|X\|``.
+
+### GitHub Pages deployment
+
+The workflow in ``.github/workflows/docs.yml`` runs on every push to ``main``:
+builds the HTML, deploys to the ``gh-pages`` branch via
+``peaceiris/actions-gh-pages``.  The live site is at
+``https://colbych.github.io/pytrist/``.
+
+To enable GitHub Pages for a new fork: **Settings → Pages → Source → gh-pages branch**.
+
+---
+
+## 10. Known Limitations and Future Work
 
 - **Slice files** (`slice/` subdirectory): not yet supported.
 - **Restart files**: not needed for analysis; not implemented.
