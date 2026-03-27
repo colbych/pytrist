@@ -30,14 +30,15 @@ unit conversion to physically meaningful ion units.
 pytrist/
 ├── __init__.py        — Re-exports the public API
 ├── simulation.py      — Simulation class (primary entry point)
-├── fields.py          — FieldSnapshot, FieldLoader
+├── fields.py          — FieldSnapshot, FieldLoader (+ derived EM quantities)
 ├── particles.py       — ParticleSnapshot
 ├── moments.py         — ParticleMoments
+├── field_moments.py   — FieldMoments (field-file moment tensor diagnostics)
 ├── params.py          — SimParams
 ├── history.py         — History
 ├── spectra.py         — SpectraSnapshot
 ├── units.py           — UnitConverter
-└── energy.py          — EnergyFlux  [IN DEVELOPMENT — see §9]
+└── energy.py          — EnergyFlux (see §9)
 ```
 
 ---
@@ -169,10 +170,16 @@ v[vAi] = v[c] × c / vAi = v[c] / (vAi/c) = v[c] / √(σ/mass_ratio)
 ```
 
 **Electromagnetic fields:**
-B fields are stored normalised to B0 (the background field strength).  By
+B fields are stored normalised to B0 (the background field magnitude).  By
 definition, B0 = 1 in both code and ion units, so the conversion factor is
-1.0 and numerical values are unchanged.  The same applies to E fields, which
-are normalised identically.
+1.0 and numerical values are unchanged.
+
+E fields in code units are also normalised to B0.  In ion units they are
+normalised to **E0 = B0 × vAi_over_c** (the natural ion electric field
+scale), so the conversion factor from code units to ion units is
+`B0 / E0 = 1 / vAi_over_c`.  With this convention, `field_E(E) × field_B(B)`
+gives the Poynting flux directly in ion units, and an ExB drift at vAi has
+magnitude 1.0 in ion units.
 
 ### Numeric example
 
@@ -201,8 +208,11 @@ Simulation
 │   └── uses: UnitConverter      — attached as .uc
 ├── returns: ParticleMoments     — via .moments(step)
 │   └── uses: UnitConverter      — attached as .uc
-├── returns: EnergyFlux          — via .energy_flux(step)  [IN DEVELOPMENT]
+├── returns: FieldMoments        — via .field_moments(step)
 │   └── uses: UnitConverter      — attached as .uc
+├── returns: EnergyFlux          — via .energy_flux(step)
+│   ├── uses: UnitConverter      — attached as .uc
+│   └── shares: FieldMoments     — ef._fm is the same object as sim.field_moments(step)
 ├── returns: SpectraSnapshot     — via .spectra(step)
 ├── returns: History             — via .history()
 │   └── uses: UnitConverter      — for .time_ion
@@ -220,8 +230,10 @@ Simulation
 ### Caching strategy
 
 - `Simulation` caches `SimParams`, `FieldSnapshot`, `ParticleSnapshot`,
-  `SpectraSnapshot`, `ParticleMoments`, `EnergyFlux`, and `History` objects
-  in dicts keyed by step number.
+  `SpectraSnapshot`, `ParticleMoments`, `FieldMoments`, `EnergyFlux`, and
+  `History` objects in dicts keyed by step number.
+- `sim.energy_flux(step)` and `sim.field_moments(step)` share the same
+  `FieldMoments` instance to avoid duplicate dataset reads.
 - Individual snapshots cache raw NumPy arrays in `self._cache` dicts.
 - `clear_cache()` methods allow releasing memory when processing many steps.
 
@@ -295,6 +307,42 @@ t_ion = hist.time_ion      # converted to 1/Ωci_y (needs unit_converter)
 spec = sim.spectra(step=10)
 gamma_bins = spec.gamma_bins
 dn_de = spec.spectrum(1)   # dN/dγ for species 1
+```
+
+### Derived EM quantities (FieldSnapshot)
+
+```python
+flds = sim.fields(step=10)
+
+b2   = flds.B_squared()             # |B|², code units
+edb  = flds.E_dot_B()               # E·B invariant
+exb  = flds.ExB_drift(units='ion')  # {'x','y','z'} in vAi
+bhat = flds.B_hat()                 # unit vector {'x','y','z'}, dimensionless
+psi  = flds.psi(units='ion')        # magnetic flux function (x-y plane), in di
+```
+
+### Field-file moment diagnostics (FieldMoments)
+
+```python
+fm = sim.field_moments(step=10)
+
+vel  = fm.bulk_velocity(1, units='ion')     # {'x','y','z'} in vAi
+rho  = fm.charge_density(1, units='ion')   # q_k n_k / n0
+P    = fm.pressure_tensor(1, units='ion')  # {'xx'..'yz'} in n0 mi vAi²
+T    = fm.temperature_tensor(2)            # {'xx'..'yz'} code units
+```
+
+### Energy flux decomposition (EnergyFlux)
+
+```python
+ef = sim.energy_flux(step=10)
+
+ke_ion   = ef.bulk_ke_density(2, units='ion')         # shape (nz, ny, nx)
+q_enth   = ef.enthalpy_flux(2, units='ion')           # {'x','y','z'}
+q_heat   = ef.heat_flux(2, units='ion')               # {'x','y','z'}
+S        = ef.poynting_flux(units='ion')              # {'x','y','z'}
+total    = ef.total_particle_energy_flux(2, units='ion')
+grand    = ef.total_energy_flux(species_ids=[1, 2], units='ion')
 ```
 
 ### Memory management
@@ -454,13 +502,16 @@ and `simulation.py` tests.
 
 ---
 
-## 9. EnergyFlux Module — In Development
+## 9. EnergyFlux and FieldMoments Modules
 
 ### Overview
 
-`pytrist/energy.py` provides `EnergyFlux`, a class for computing all terms in the plasma
-energy density flux decomposition from the field-file moment tensors (TXX, QX, etc.).
-It is accessed via `sim.energy_flux(step)` and mirrors the `ParticleMoments` design.
+`pytrist/energy.py` provides `EnergyFlux`, computing all terms in the plasma
+energy density flux decomposition from field-file moment tensors (TXX, QX, etc.).
+`pytrist/field_moments.py` provides `FieldMoments`, a lower-level class for
+frequently-needed derived diagnostics (bulk velocity, pressure tensor, temperature
+tensor, charge density).  `EnergyFlux` delegates its moment calculations to an
+internal `FieldMoments` instance.
 
 ### Physics: energy flux decomposition
 
@@ -478,16 +529,24 @@ Q_s = q_KE + q_enthalpy + q_heat
 | Internal energy flux | `u_th_s × U_i` | `/ (n0 × mr) × c_to_vAi³` |
 | Enthalpy flux | `P_ij U_j` (full tensor·velocity) | `/ (n0 × mr) × c_to_vAi³` |
 | Heat flux | `½ QX_s − q_KE − q_enth − q_IE` | `/ (n0 × mr) × c_to_vAi³` |
-| Poynting flux | `CC × (E×B)` | `× c_to_vAi³ / (4π × n0 × mr × CC²)` |
+| Poynting flux | `CC × (E×B)` | `/ (CC × B0 × E0)` |
 
-where `mr = mass_ratio`, `n0 = ppc0/2`.  Poynting ion-unit normalisation uses the
-Gaussian Alfvén relation `B0² = 4π n0 mi vAi²`.
+where `mr = mass_ratio`, `n0 = ppc0/2`, `E0 = B0 × vAi_over_c`.  Poynting ion
+normalization uses the Gaussian Alfvén relation `B0² = 4π n_phys mi vAi²`; the
+4π cancels with the Gaussian Poynting prefactor, leaving `S_ion = (E×B)/(B0²×vAi_over_c)`.
+**Poynting flux does not require n0**; only a `UnitConverter` is needed.
 
 `dens_s` stores mass density `m_s n_s`.  The diagonal stress tensor `TXX_s` stores
-`m_s n_s ⟨v_x²⟩`.  All particle energy flux terms share dimension `[m_s n_s c³]`
-in code units.
+the raw second moment `m_s n_s ⟨v_x²⟩` (NOT the pressure tensor).
+All particle energy flux terms share dimension `[m_s n_s c³]` in code units.
 
-### Public API
+**Critical identity (verified on real data):**
+```
+½ Q_raw_i = q_KE_i + q_enth_i + q_IE_i + q_heat_i
+```
+i.e., `total_particle_energy_flux + internal_energy_flux = ½ Q_raw`.
+
+### EnergyFlux: public API (all methods complete)
 
 ```python
 ef = sim.energy_flux(step=10)
@@ -507,36 +566,52 @@ ef.poynting_flux(units='code')
 ef.total_particle_energy_flux(species_id, units='code')  # KE + enthalpy + heat
 ef.total_energy_flux(species_ids=[1,2], units='code')    # Poynting + all species
 
-ef.clear_cache()
+ef.clear_cache()   # also clears the internal FieldMoments cache
 ```
 
-### Implementation status
+### FieldMoments: public API
 
-| Method | Status | Notes |
-|--------|--------|-------|
-| `bulk_ke_density` | **Done** | Verified on test data |
-| `internal_energy_density` | **Done** | Uses `_pressure_tensor_raw()` |
-| `bulk_ke_flux` | **Done** | Verified on test data |
-| `internal_energy_flux` | **Done** | Verified on test data |
-| `enthalpy_flux` | **Done** | Verified on test data |
-| `heat_flux` | **Done** | QX/QY/QZ are raw 3rd moments; subtracts bulk contributions |
-| `poynting_flux` | Stub (`pass`) | |
-| `total_particle_energy_flux` | Stub (`pass`) | Depends on above |
-| `total_energy_flux` | Stub (`pass`) | Depends on above |
+```python
+fm = sim.field_moments(step=10)
+
+fm.bulk_velocity(species_id, units='code')      # {'x','y','z'} in [c] or [vAi]
+fm.charge_density(species_id, units='code')     # (q_k/m_k)×dens; ion: /n0
+fm.pressure_tensor(species_id, units='code')    # {'xx'..'yz'}; ion: c_to_vAi²/(n0×mr)
+fm.temperature_tensor(species_id, units='code') # P×m_k/dens; ion: c_to_vAi²/mr → [mi vAi²]
+
+fm.clear_cache()
+```
+
+Temperature tensor ion units: `c_to_vAi² / mass_ratio` for **all** species →
+result is in `[mi vAi²]` regardless of species mass (factor correctly absorbs species
+mass in the ratio `P_code / n_k_code`).
+
+### FieldSnapshot derived EM quantities
+
+```python
+flds = sim.fields(step=10)
+
+flds.B_squared(units='code')     # |B|² scalar
+flds.E_dot_B(units='code')       # E·B invariant scalar
+flds.ExB_drift(units='ion')      # {'x','y','z'} ExB drift velocity in vAi
+flds.B_hat()                     # {'x','y','z'} unit vector (dimensionless)
+flds.psi(units='ion')            # magnetic flux function (x-y plane) in di
+```
+
+`psi` integration (two-step shifted cumsum, `ψ(0,0) = 0` by construction):
+1. `ψ(x, 0) = −∫By dx` at y=0
+2. `ψ(x, y) = ψ(x, 0) + ∫Bx dy`
 
 ### Design conventions
 
 - All intermediate results cached in **code units** under tuple keys, e.g.
   `("ke_density_code", species_id)`.  Ion conversion applied at return time only.
-- Methods that require missing datasets (`TXX`, `QX`, etc.) raise `KeyError` with
-  an informative message listing available fields.
 - Missing off-diagonal stress components (`TXY`, `TXZ`, `TYZ`) are substituted with
   zero and a `RuntimeWarning` is emitted.
 - **`TXX_s` stores the raw lab-frame second moment** `Π_ij = ρ_s <v_i v_j>`, NOT the
-  pressure tensor.  `_pressure_tensor_raw()` subtracts `ρ_s U_i U_j` to recover `P_ij`.
+  pressure tensor.  `pressure_tensor()` in `FieldMoments` subtracts `ρ_s U_i U_j`.
 - **`QX_s` stores the raw lab-frame third moment** `ρ_s <|v|² v_i>`, NOT the heat-flux
-  cumulant and WITHOUT a factor of ½.  `heat_flux()` applies the identity
-  `q_i = ½ Q_raw_i − q_KE_i − q_enthalpy_i − q_IE_i` to recover the true cumulant.
+  cumulant and WITHOUT a factor of ½.  `heat_flux()` applies the identity above.
 - Requires a `params` file attached to the `FieldSnapshot` so that `_species_mass`,
   `_species_charge`, and `_n0` are populated.
 
@@ -546,10 +621,12 @@ ef.clear_cache()
 /Users/colby/Research/Programing/PIC/tristan-mp-v2/test_output_energyflux/
 ```
 Homogeneous two-beam test run: `sigma=0.0016, mass_ratio=100, ppc0=100`, steps 0–2.
+Background field By present (nonzero B0) — suitable for Poynting and ExB tests.
 Injection (from `user_test_thrid_moment.F90`, `shift_gamma=1.0002`, `v_=0.02c`):
 - Beam A (3/4 of particles): `vx=0.01c, vy=0`
 - Beam B (1/4 of particles): `vx=0.01c, vy=+0.08c`
 Bulk: `Ux=0.01c, Uy=0.02c`.  No particle output (`prtl_enable=0`).
+Equilibrium: ExB drift ≈ 0.01c ≈ 2.5 vAi (in ion units).
 
 ---
 

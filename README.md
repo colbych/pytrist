@@ -91,7 +91,7 @@ y = electrons["y"]    # y-position (cells)
 u = electrons["u"]    # x-velocity (4-velocity γβx, units of c)
 v = electrons["v"]    # y-velocity
 w = electrons["w"]    # z-velocity
-w = electrons["wei"]  # macro-particle weight
+wei = electrons["wei"]  # macro-particle weight
 
 # Lorentz factor γ = sqrt(1 + u² + v² + w²)
 gamma_e = prtl.gamma(species_id=1)
@@ -121,6 +121,76 @@ dn_dgamma  = spec.spectrum(1)      # dN/dγ for species 1 (electrons)
 ion_spec   = spec.spectrum(2)      # ions
 ```
 
+### Derived EM quantities (FieldSnapshot)
+
+Several commonly needed quantities can be computed directly from the field snapshot:
+
+```python
+flds = sim.fields(step=10)
+
+b2   = flds.B_squared()             # |B|², shape (nz, ny, nx)
+edb  = flds.E_dot_B()               # E·B invariant
+bhat = flds.B_hat()                 # unit vector {'x','y','z'}, dimensionless
+exb  = flds.ExB_drift(units='ion')  # ExB drift velocity {'x','y','z'} in vAi
+psi  = flds.psi(units='ion')        # magnetic flux function ψ (x-y plane) in d_i
+```
+
+`psi` is integrated from the origin as `ψ(x,0) = −∫By dx` then `ψ(x,y) = ψ(x,0) + ∫Bx dy`, so contours of `psi` are magnetic field lines in 2-D runs.
+
+### Field-file moment diagnostics (FieldMoments)
+
+Tristan-V2 writes per-species moment tensors (density, current, stress tensor, heat flux) to the field file. `FieldMoments` turns these into physical quantities:
+
+```python
+fm = sim.field_moments(step=10)
+
+# Bulk velocity {'x','y','z'} — code units [c] or ion units [vAi]
+vel = fm.bulk_velocity(1, units='ion')    # electrons
+vel = fm.bulk_velocity(2, units='ion')    # ions
+
+# Charge density ρ = q n
+rho = fm.charge_density(1, units='ion')  # normalised to n0
+
+# Pressure tensor {'xx','yy','zz','xy','xz','yz'}
+P = fm.pressure_tensor(1, units='ion')   # [n0 mi vAi²]
+
+# Temperature tensor (pressure / number density)
+T = fm.temperature_tensor(1, units='ion')  # [mi vAi²] for all species
+```
+
+`FieldMoments` requires a params file to be present (for species mass/charge and n0). The instance is cached and shared with `EnergyFlux`, so calling both in one analysis session does not reload any data.
+
+### Energy flux decomposition (EnergyFlux)
+
+`EnergyFlux` computes all terms in the particle and electromagnetic energy flux budget:
+
+```python
+ef = sim.energy_flux(step=10)
+
+# Bulk kinetic energy density and flux
+ke  = ef.bulk_ke_density(2, units='ion')   # ½ ρ |U|², shape (nz, ny, nx)
+qke = ef.bulk_ke_flux(2, units='ion')      # ke × U, dict {'x','y','z'}
+
+# Thermal (internal) energy density and flux
+u_th  = ef.internal_energy_density(2, units='ion')
+q_ie  = ef.internal_energy_flux(2, units='ion')
+
+# Enthalpy flux (pressure-tensor work): P·U
+q_enth = ef.enthalpy_flux(2, units='ion')
+
+# Irreducible heat flux cumulant
+q_heat = ef.heat_flux(2, units='ion')
+
+# Electromagnetic Poynting flux
+S = ef.poynting_flux(units='ion')          # CC (E×B), dict {'x','y','z'}
+
+# Totals
+Q_prtl = ef.total_particle_energy_flux(2, units='ion')  # ke + enthalpy + heat
+Q_tot  = ef.total_energy_flux(species_ids=[1, 2], units='ion')  # Poynting + all species
+```
+
+All methods accept `units='code'` (default) or `units='ion'`. Particle fluxes are normalised to `[n0 mi vAi³]`; Poynting flux uses the Gaussian Alfvén relation and does not require n0.
+
 ### Simulation parameters
 
 ```python
@@ -147,8 +217,10 @@ Tristan-V2 uses internal units based on electron scales: lengths in grid cells, 
 | Length | grid cell | ion inertial length d_i | `1 / (c_omp × √mass_ratio)` |
 | Time | 1/ωpe | 1/Ωci (ion cyclotron period) | `√σ / mass_ratio` |
 | Speed | c | vAi (ion Alfvén speed) | `√(mass_ratio / σ)` |
+| B field | B0 | B0 | 1 (unchanged) |
+| E field | B0 | E0 = B0 × vAi/c | `1 / (vAi/c)` |
 
-where σ = ωce²/ωpe² is the magnetisation parameter.
+where σ = ωce²/ωpe² is the magnetisation parameter.  The E field ion unit E0 = B0 × vAi/c is chosen so that an ExB drift at vAi has magnitude 1, and `field_E(E) × field_B(B)` gives the Poynting flux directly in ion units.
 
 ### Using the UnitConverter
 
@@ -229,6 +301,8 @@ The `examples/` directory contains self-contained scripts demonstrating common a
 | `examples/04_particle_phase_space.py` | Phase-space scatter plot |
 | `examples/05_energy_spectra.py` | Plot particle energy spectra |
 | `examples/06_unit_conversion.py` | Demonstrate all unit conversion utilities |
+
+For deeper walkthroughs of the unit system, derived diagnostics, and energy flux analysis, see the `notebooks/` directory.
 
 ## Contributing
 
