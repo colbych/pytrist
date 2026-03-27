@@ -291,18 +291,28 @@ bx   = snap.bx
 
 ## Examples
 
-The `examples/` directory contains self-contained scripts demonstrating common analysis tasks:
+The `examples/` directory contains self-contained scripts and interactive notebooks.
+
+**Scripts** (`examples/scripts/`):
 
 | Script | Description |
 |--------|-------------|
-| `examples/01_inspect_simulation.py` | Explore an output directory and print a summary |
-| `examples/02_plot_fields.py` | 2-D colour plots of By and density |
-| `examples/03_energy_history.py` | Plot energy partition over time |
-| `examples/04_particle_phase_space.py` | Phase-space scatter plot |
-| `examples/05_energy_spectra.py` | Plot particle energy spectra |
-| `examples/06_unit_conversion.py` | Demonstrate all unit conversion utilities |
+| `01_inspect_simulation.py` | Explore an output directory and print a summary |
+| `02_plot_fields.py` | 2-D colour plots of Bz, density, and field lines |
+| `03_energy_history.py` | Plot energy partition over time |
+| `04_particle_phase_space.py` | Phase-space scatter plot |
+| `05_energy_spectra.py` | Plot particle energy spectra |
+| `06_unit_conversion.py` | Demonstrate all unit conversion utilities |
+| `07_field_moments.py` | Spatial maps of bulk velocity and temperature tensor |
+| `08_energy_flux.py` | Energy flux decomposition profiles |
 
-For deeper walkthroughs of the unit system, derived diagnostics, and energy flux analysis, see the `notebooks/` directory.
+**Notebooks** (`examples/notebooks/`):
+
+| Notebook | Description |
+|----------|-------------|
+| `01_getting_started.ipynb` | Load a simulation, read fields and particles, plot |
+| `02_unit_conversion.ipynb` | Unit system walkthrough with worked examples |
+| `03_energy_analysis.ipynb` | Energy flux decomposition and budget verification |
 
 ## Contributing
 
