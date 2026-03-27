@@ -435,7 +435,7 @@ class ParticleMoments:
     def heat_flux(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Extensive heat flux  Q_i = n × (m_k/m_i) × ½<|δu|² δu_i>.
+        """Extensive heat flux  Q_i = n × (m_k/m_i) × ½<\|δu\|² δu_i>.
 
         Extensive quantity consistent with the temperature tensor normalisation.
         The intensive heat flux is defined as the third-order velocity moment

@@ -331,7 +331,7 @@ class FieldSnapshot:
     # ------------------------------------------------------------------
 
     def B_squared(self) -> np.ndarray:
-        """Scalar magnetic energy density |B|².
+        """Scalar magnetic energy density \|B\|².
 
         In ion units returns ``(B/B0)²``, so the upstream guide field gives 1.
         """
@@ -360,7 +360,7 @@ class FieldSnapshot:
         }
 
     def B_hat(self) -> dict[str, np.ndarray]:
-        """Magnetic field unit vector B/|B|, dict with keys 'x', 'y', 'z'.
+        """Magnetic field unit vector B/\|B\|, dict with keys 'x', 'y', 'z'.
 
         Dimensionless — identical in code and ion units since the B0
         normalisation cancels.  Returns zero where B = 0.
@@ -435,12 +435,12 @@ class FieldSnapshot:
 
     @property
     def b_magnitude(self) -> np.ndarray:
-        """Total magnetic field magnitude |B|."""
+        """Total magnetic field magnitude \|B\|."""
         return np.sqrt(self.bx**2 + self.by**2 + self.bz**2)
 
     @property
     def e_magnitude(self) -> np.ndarray:
-        """Total electric field magnitude |E|."""
+        """Total electric field magnitude \|E\|."""
         return np.sqrt(self.ex**2 + self.ey**2 + self.ez**2)
 
     def bulk_velocity(

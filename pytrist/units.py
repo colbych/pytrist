@@ -142,8 +142,7 @@ class UnitConverter:
 
         Derivation:
             vAi = c × √(σ / (mi/me))
-            v[vAi] = v[c] / (vAi/c) = v[c] / √(σ/(mi/me))
-                   = v[c] × √((mi/me)/σ)
+            v[vAi] = v[c] / (vAi/c) = v[c] / √(σ/(mi/me)) = v[c] × √((mi/me)/σ)
         """
         return np.sqrt(self._mass_ratio / self._sigma)
 

@@ -1,0 +1,36 @@
+name: Build and deploy docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual trigger from the GitHub Actions tab
+
+permissions:
+  contents: write    # needed to push to gh-pages branch
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and docs dependencies
+        run: pip install -e ".[docs]"
+
+      - name: Build HTML docs
+        run: sphinx-build -b html docs docs/_build/html -W --keep-going
+        # -W  turns warnings into errors (catches broken references early)
+        # --keep-going  reports all warnings rather than stopping at the first
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/_build/html
+          # The built HTML is pushed to the gh-pages branch.
+          # Enable GitHub Pages in repo Settings → Pages → Source: gh-pages branch.

@@ -96,7 +96,7 @@ class EnergyFlux:
     # ------------------------------------------------------------------
 
     def bulk_ke_density(self, species_id: int, units: str = "code") -> np.ndarray:
-        """Bulk kinetic energy density: ½ dens_s |U_s|².
+        """Bulk kinetic energy density: ½ dens_s \|U_s\|².
 
         In code units: ``[m_k n_k c²]`` — same dimension as stress-tensor
         diagonal components.
@@ -151,7 +151,7 @@ class EnergyFlux:
     def bulk_ke_flux(
         self, species_id: int, units: str = "code"
     ) -> dict[str, np.ndarray]:
-        """Bulk kinetic energy flux: ½ dens_s |U_s|² × U_s.
+        """Bulk kinetic energy flux: ½ dens_s \|U_s\|² × U_s.
 
         In code units: ``[m_k n_k c³]`` — same dimension as heat-flux
         components.

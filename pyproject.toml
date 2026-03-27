@@ -34,7 +34,8 @@ Repository = "https://github.com/colbych/pytrist"
 [project.optional-dependencies]
 plot = ["matplotlib>=3.5"]
 xarray = ["xarray>=0.19"]
-dev = ["pytest", "pytest-cov", "matplotlib>=3.5"]
+dev  = ["pytest", "pytest-cov", "matplotlib>=3.5"]
+docs = ["sphinx>=7", "pydata-sphinx-theme>=0.15", "sphinx-autodoc-typehints"]
 
 [tool.setuptools.packages.find]
 where = ["."]
